@@ -1,3 +1,4 @@
 # DL Lab Project
+Deep Learning Lab SS19, University of Freiburg
 
-Final Lab Project for University of Freiburg SS 19.
+Comparison of LSTMs and Transformers.
