@@ -197,19 +197,19 @@ class SeqLabel():
                 self.stats['epoch'].append(i+1)
                 print("Epoch #{}: Train F1-score is {}".format(i + 1, self.stats['train_score'][-1]))
                 self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i+1)))
+                self.save_stats(stats, os.path.join(out_dir, "stats.json"))
 
                 if valid_loader is not None:
                     f1, val_loss = self.evaluate(valid_loader, verbose=False)
                     self.stats['valid_score'].append(f1)
                     self.stats['valid_loss'].append(val_loss)
                     print("Epoch #{}: Validation F1-score is {}".format(i + 1, self.stats['valid_score'][-1]))
-
-            self.plot_history(self.stats['train_score'], self.stats['valid_score'], stats='f1',
-                              file_path=os.path.join(out_dir, "f1score_{}.png".format(i + 1)))
-            self.plot_history(self.stats['train_loss'], self.stats['valid_loss'], stats='loss',
-                              file_path=os.path.join(out_dir, "loss_{}.png".format(i + 1)))
-
             print()
+
+        self.plot_history(self.stats['train_score'], self.stats['valid_score'], stats='f1',
+                          file_path=os.path.join(out_dir, "f1score_{}.png".format(i + 1)))
+        self.plot_history(self.stats['train_loss'], self.stats['valid_loss'], stats='loss',
+                          file_path=os.path.join(out_dir, "loss_{}.png".format(i + 1)))
         return self.model, self.stats
 
     def evaluate(self, test_loader, verbose=True):
