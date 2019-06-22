@@ -197,7 +197,7 @@ class SeqLabel():
                 self.stats['epoch'].append(i+1)
                 print("Epoch #{}: Train F1-score is {}".format(i + 1, self.stats['train_score'][-1]))
                 self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i+1)))
-                self.save_stats(stats, os.path.join(out_dir, "stats.json"))
+                self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
 
                 if valid_loader is not None:
                     f1, val_loss = self.evaluate(valid_loader, verbose=False)
