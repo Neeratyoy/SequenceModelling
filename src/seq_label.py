@@ -1,3 +1,5 @@
+import json
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -65,6 +67,39 @@ class LSTM_SeqLabel(nn.Module):
         return tot_sum
 
 
+## Sentiment Analysis network - using PyTorch LSTM module
+class SentimentNetworkBaseline(nn.Module):
+
+    def __init__(self, n_input, n_embed, n_hidden, n_output, pretrained_vec=None, layers=1, bidirectional=False):
+        super().__init__()
+
+        self.hidden_dim = n_hidden
+        self.bidirectional = bidirectional
+        self.layers = layers
+
+        self.embedding = nn.Embedding(n_input, n_embed)
+        # not training embedding layer if pretrained embedding is provided
+        if pretrained_vec is not None:
+            self.embedding.weight.data.copy_(pretrained_vec)
+            self.embedding.weight.requires_grad = False
+
+        self.lstm = nn.LSTM(n_embed, n_hidden, bidirectional=self.bidirectional, num_layers=layers)
+        if self.bidirectional:
+            self.fc = nn.Linear(2 * n_hidden, n_output)
+        else:
+            self.fc = nn.Linear(n_hidden, n_output)
+
+    def forward(self, x, h, c):
+        embed = self.embedding(x)
+        _, (h, _) = self.lstm(embed, (h, c))
+        if self.bidirectional:
+            h = h.view(self.layers, 2, embed.shape[1], self.hidden_dim)
+            # Flattening hidden state for the 2 directions in bidirectional
+            h = torch.cat((h[:,0,:,:], h[:,1,:,:]), dim=2)
+        y = self.fc(h) #h.squeeze(0))
+        return y
+
+
 class SeqLabel():
     """ Class to carry out Sequence Labelling (many-to-one)
 
@@ -87,12 +122,12 @@ class SeqLabel():
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.device = device
 
-    def plot_history(self, train, valid=None, epochs=None, file_path='./plot.png', stats='loss'):
+    def plot_history(self, train, valid=[], epochs=None, file_path='./plot.png', stats='loss'):
         if epochs is None:
             epochs = np.arange(1, len(train)+1)
         plt.clf()
         plt.plot(epochs, train, label="Training")
-        if valid is not None:
+        if valid: # valid is empty
             plt.plot(epochs, valid, label="Validation")
         plt.title("{} comparison".format(stats))
         plt.xlabel("epochs")
@@ -100,6 +135,10 @@ class SeqLabel():
         plt.legend()
         plt.grid()
         plt.savefig(file_path, dpi=300)
+
+    def save_stats(self, stats, file_path='./stats.json'):
+        with open(file_path, 'w') as f:
+            json.dump(stats, f)
 
     def train(self, epochs, train_loader, valid_loader=None, freq=10, out_dir='./'):
         """ Function to train the model and save statistics
@@ -138,7 +177,7 @@ class SeqLabel():
                 output = self.model(batch.text, hidden_state, cell_state)
                 # backward pass for the batch (+ weight updates)
                 self.optimizer.zero_grad()
-                loss = self.loss_criterion(output.view(output.shape[1]), batch.label)
+                loss = self.loss_criterion(output.view(-1), batch.label)
                 loss.backward()
                 self.optimizer.step()
 
@@ -148,7 +187,7 @@ class SeqLabel():
                 loss_tracker.append(loss.item())
 
             self.stats['loss'].append(np.mean(loss_tracker))
-            loss_tracker = []
+
             print()
             print("Epoch #{}: Average loss is {}".format(i + 1, self.stats['loss'][-1]))
             if i % freq == 0:
@@ -158,18 +197,18 @@ class SeqLabel():
                 self.stats['epoch'].append(i+1)
                 print("Epoch #{}: Train F1-score is {}".format(i + 1, self.stats['train_score'][-1]))
                 self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i+1)))
-                self.plot_history(self.stats['train_score'], stats='f1',
-                                  file_path=os.path.join(out_dir, "f1score_{}.png".format(i+1)))
-                self.plot_history(self.stats['train_loss'], stats='loss',
-                                  file_path=os.path.join(out_dir, "loss_{}.png".format(i+1)))
-            if i % freq == 0 and valid_loader is not None:
-                f1, val_loss = self.evaluate(valid_loader, verbose=False)
-                self.stats['valid_score'].append(f1)
-                self.stats['valid_loss'].append(val_loss)
-                print("Epoch #{}: Validation F1-score is {}".format(i + 1, self.stats['valid_score'][-1]))
-                self.plot_history(self.stats['train_loss'], self.stats['valid_loss'],
-                                  self.stats['epoch'], stats='loss',
-                                  file_path=os.path.join(out_dir, "loss_{}.png".format(i+1)))
+
+                if valid_loader is not None:
+                    f1, val_loss = self.evaluate(valid_loader, verbose=False)
+                    self.stats['valid_score'].append(f1)
+                    self.stats['valid_loss'].append(val_loss)
+                    print("Epoch #{}: Validation F1-score is {}".format(i + 1, self.stats['valid_score'][-1]))
+
+            self.plot_history(self.stats['train_score'], self.stats['valid_score'], stats='f1',
+                              file_path=os.path.join(out_dir, "f1score_{}.png".format(i + 1)))
+            self.plot_history(self.stats['train_loss'], self.stats['valid_loss'], stats='loss',
+                              file_path=os.path.join(out_dir, "loss_{}.png".format(i + 1)))
+
             print()
         return self.model, self.stats
 

@@ -34,10 +34,12 @@ class SentimentNetwork(nn.Module):
 ## Sentiment Analysis network - using PyTorch LSTM module
 class SentimentNetworkBaseline(nn.Module):
 
-    def __init__(self, n_input, n_embed, n_hidden, n_output, pretrained_vec=None):
+    def __init__(self, n_input, n_embed, n_hidden, n_output, layers=1, bidirectional=False, pretrained_vec=None):
         super().__init__()
 
         self.hidden_dim = n_hidden
+        self.bidirectional = bidirectional
+        self.layers = layers
 
         self.embedding = nn.Embedding(n_input, n_embed)
         # not training embedding layer if pretrained embedding is provided
@@ -45,11 +47,18 @@ class SentimentNetworkBaseline(nn.Module):
             self.embedding.weight.data.copy_(pretrained_vec)
             self.embedding.weight.requires_grad = False
 
-        self.lstm = nn.LSTM(n_embed, n_hidden)
-        self.fc = nn.Linear(n_hidden, n_output)
+        self.lstm = nn.LSTM(n_embed, n_hidden, bidirectional=self.bidirectional, num_layers=layers)
+        if self.bidirectional:
+            self.fc = nn.Linear(2 * n_hidden, n_output)
+        else:
+            self.fc = nn.Linear(n_hidden, n_output)
 
     def forward(self, x, h, c):
         embed = self.embedding(x)
-        output, (h, c) = self.lstm(embed, (h, c))
-        y = self.fc(h.squeeze(0))
-        return y, h, c
+        _, (h, _) = self.lstm(embed, (h, c))
+        if self.bidirectional:
+            h = h.view(self.layers, 2, embed.shape[1], self.hidden_dim)
+            # Flattening hidden state for the 2 directions in bidirectional
+            h = torch.cat((h[:,0,:,:], h[:,1,:,:]), dim=2)
+        y = self.fc(h) #h.squeeze(0))
+        return y
