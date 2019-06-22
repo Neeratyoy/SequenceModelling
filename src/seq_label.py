@@ -119,7 +119,8 @@ class SeqLabel():
 
         """
         print("Beginning training model with {} parameters\n".format(self.model.count_parameters()))
-        self.stats = {'loss': [], 'train_score': [], 'valid_score': [], 'epoch': []}
+        self.stats = {'loss': [], 'train_score': [], 'valid_score': [], 'epoch': [],
+                      'train_loss': [], 'valid_loss': []}
         for i in range(epochs):
             loss_tracker = []
 
@@ -149,20 +150,24 @@ class SeqLabel():
             print()
             print("Epoch #{}: Average loss is {}".format(i + 1, self.stats['loss'][-1]))
             if i % freq == 0:
-                f1 = self.evaluate(train_loader, verbose=False)
+                f1, train_loss = self.evaluate(train_loader, verbose=False)
                 self.stats['train_score'].append(f1)
+                self.stats['train_loss'].append(train_loss)
                 self.stats['epoch'].append(i+1)
                 print("Epoch #{}: Train F1-score is {}".format(i + 1, self.stats['train_score'][-1]))
                 self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i+1)))
                 self.plot_history(self.stats['train_score'], stats='f1',
                                   file_path=os.path.join(out_dir, "f1score_{}.pkl".format(i+1)))
+                self.plot_history(self.stats['train_loss'], stats='loss',
+                                  file_path=os.path.join(out_dir, "loss_{}.pkl".format(i+1)))
             if i % freq == 0 and valid_loader is not None:
-                f1 = self.evaluate(valid_loader, verbose=False)
+                f1, val_loss = self.evaluate(valid_loader, verbose=False)
                 self.stats['valid_score'].append(f1)
+                self.stats['valid_loss'].append(val_loss)
                 print("Epoch #{}: Validation F1-score is {}".format(i + 1, self.stats['valid_score'][-1]))
-                self.plot_history(self.stats['train_score'], self.stats['valid_score'],
-                                  self.stats['epoch'], stats='f1',
-                                  file_path=os.path.join(out_dir, "f1score_{}.pkl".format(i+1)))
+                self.plot_history(self.stats['train_loss'], self.stats['valid_loss'],
+                                  self.stats['epoch'], stats='loss',
+                                  file_path=os.path.join(out_dir, "loss_{}.pkl".format(i+1)))
             print()
         return self.model, self.stats
 
@@ -182,6 +187,7 @@ class SeqLabel():
 
         preds = []
         labels = []
+        losses = []
 
         with torch.no_grad():
             for batch in test_loader:
@@ -191,15 +197,17 @@ class SeqLabel():
                                          self.model.hidden_dim).to(self.device)
                 output = self.model(batch.text, hidden_state, cell_state)
                 output = output.view(output.shape[1])
+                loss = self.loss_criterion(output, batch.label)
                 # get label predictions - since we predict only probabilities for label 1
                 pred = torch.round(torch.sigmoid(output)).cpu().detach().numpy()
                 preds.extend(pred)
                 labels.extend(batch.label.cpu().detach().numpy())
+                losses.extend(loss.item())
 
         if verbose:
             print('Confusion Matrix: \n', confusion_matrix(labels, preds))
             print('Classification Report: \n', classification_report(labels, preds))
-        return f1_score(labels, preds)
+        return f1_score(labels, preds), np.mean(losses)
 
 
 
