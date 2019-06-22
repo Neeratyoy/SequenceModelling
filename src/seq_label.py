@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 import os
+from matplotlib import pyplot as plt
+
 from lstm import LSTM
 
 from sklearn.metrics import confusion_matrix, f1_score, classification_report
@@ -55,7 +57,7 @@ class LSTM_SeqLabel(nn.Module):
         return output
 
     def save(self, file_path='./model.pkl'):
-        torch.save(model.state_dict(), file_path)
+        torch.save(self.state_dict(), file_path)
 
     def count_parameters(self):
         tot_sum = sum(p.numel() for p in self.lstm.parameters() if p.requires_grad)
@@ -157,9 +159,9 @@ class SeqLabel():
                 print("Epoch #{}: Train F1-score is {}".format(i + 1, self.stats['train_score'][-1]))
                 self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i+1)))
                 self.plot_history(self.stats['train_score'], stats='f1',
-                                  file_path=os.path.join(out_dir, "f1score_{}.pkl".format(i+1)))
+                                  file_path=os.path.join(out_dir, "f1score_{}.png".format(i+1)))
                 self.plot_history(self.stats['train_loss'], stats='loss',
-                                  file_path=os.path.join(out_dir, "loss_{}.pkl".format(i+1)))
+                                  file_path=os.path.join(out_dir, "loss_{}.png".format(i+1)))
             if i % freq == 0 and valid_loader is not None:
                 f1, val_loss = self.evaluate(valid_loader, verbose=False)
                 self.stats['valid_score'].append(f1)
@@ -167,7 +169,7 @@ class SeqLabel():
                 print("Epoch #{}: Validation F1-score is {}".format(i + 1, self.stats['valid_score'][-1]))
                 self.plot_history(self.stats['train_loss'], self.stats['valid_loss'],
                                   self.stats['epoch'], stats='loss',
-                                  file_path=os.path.join(out_dir, "loss_{}.pkl".format(i+1)))
+                                  file_path=os.path.join(out_dir, "loss_{}.png".format(i+1)))
             print()
         return self.model, self.stats
 
@@ -202,7 +204,7 @@ class SeqLabel():
                 pred = torch.round(torch.sigmoid(output)).cpu().detach().numpy()
                 preds.extend(pred)
                 labels.extend(batch.label.cpu().detach().numpy())
-                losses.extend(loss.item())
+                losses.append(loss.item())
 
         if verbose:
             print('Confusion Matrix: \n', confusion_matrix(labels, preds))
