@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import os
+import json
 from matplotlib import pyplot as plt
 
 from lstm import LSTM
