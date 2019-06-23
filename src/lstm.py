@@ -233,6 +233,29 @@ class LSTM(nn.Module):
         return output, (hidden_states, cell_states)
 
 
+class LayerNorm(nn.Module):
+    """ Implements LayerNorm
+
+    Creates a LayerNorm layer with adaptable gain (gamma) and bias (beta)
+
+    Parameters
+    ==========
+    features: Dimension of the layers preceding the LayerNorm layer
+
+    """
+
+    def __init__(self, features, eps=1e-6):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(features))
+        self.beta = nn.Parameter(torch.zeros(features))
+        self.eps = eps
+
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        return self.gamma * (x - mean) / (std + self.eps) + self.beta
+
+
 # Below class was the inital bare-bones implementation
 #
 # class LSTMCell(nn.Module):
@@ -317,20 +340,3 @@ class LSTM(nn.Module):
 #         for p in self.parameters():
 #             if p.data.ndimension() >= 2:
 #                 nn.init.xavier_uniform_(p.data)
-
-
-class LayerNorm(nn.Module):
-    """
-    Placeholder
-    """
-
-    def __init__(self, features, eps=1e-6):
-        super().__init__()
-        self.gamma = nn.Parameter(torch.ones(features))
-        self.beta = nn.Parameter(torch.zeros(features))
-        self.eps = eps
-
-    def forward(self, x):
-        mean = x.mean(-1, keepdim=True)
-        std = x.std(-1, keepdim=True)
-        return self.gamma * (x - mean) / (std + self.eps) + self.beta
