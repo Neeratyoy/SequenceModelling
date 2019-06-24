@@ -87,10 +87,11 @@ class LSTMCell(nn.Module):
 
     """
 
-    def __init__(self, input_dim, hidden_dim, xavier_init=False):
+    def __init__(self, input_dim, hidden_dim, layernorm=False):
         super().__init__()
         dim_size = input_dim + hidden_dim
         self.hidden_dim = hidden_dim
+        self.layernorm = layernorm
 
         self.weights = nn.Parameter(torch.randn(dim_size, 4 * hidden_dim))
         # self.bias = torch.ones(4 * hidden_dim)
@@ -98,9 +99,12 @@ class LSTMCell(nn.Module):
 
         self.g1 = nn.Sigmoid()
         self.g2 = nn.Tanh()
+
+        if self.layernorm:
+            self.ln_gates = nn.LayerNorm(4 * hidden_dim)
+            self.ln_candidate = nn.LayerNorm(hidden_dim)
+
         self.init_weights()
-        # if xavier_init:
-        #     self.initialize_with_Xavier()
 
     def forward(self, x, hidden_state, cell_state, device=None):
         if device is None:
@@ -122,6 +126,8 @@ class LSTMCell(nn.Module):
         concat_inputs = torch.cat((x, hidden_state), dim=2).to(device)
 
         gates = torch.matmul(concat_inputs, self.weights) + self.bias
+        if self.layernorm:
+            gates = self.ln_gates(gates)
 
         # Forget gate: $\Gamma_f = \sigma(W_f.[h_{t-1}, x_t] + b_f)$
         # Determines what(or how much) to throw away from old state
@@ -143,6 +149,9 @@ class LSTMCell(nn.Module):
         # New state: $C_t = f_t * C_{t-1} + i_t * \widetilde{C_t}$
         new_state = torch.mul(forget_g, old_state) + \
                     torch.mul(input_g, candidate_new)
+        if self.layernorm:
+            new_state = self.ln_candidate(new_state)
+
         # New hidden state/output: $h_t = \Gamma_o * tanh(C_t)$
         hidden_state = torch.mul(output_g, self.g2(new_state))
 
@@ -157,22 +166,24 @@ class LSTMCell(nn.Module):
 
 
 class LSTM(nn.Module):
-    def __init__(self, input_dim, hidden_dim, layers=1, bidirectional=False, xavier_init=False):
+    def __init__(self, input_dim, hidden_dim, layers=1, bidirectional=False, layernorm=False):
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.layers = layers
         self.bidirectional = bidirectional
+        self.layernorm = layernorm
+
         if self.layers < 1:
             raise ValueError("layers need to be > 1")
         self.model = []
         for i in range(self.layers):
-            self.model.append(LSTMCell(input_dim, hidden_dim, xavier_init))
+            self.model.append(LSTMCell(input_dim, hidden_dim, layernorm))
         self.model = nn.ModuleList(self.model)
         if self.bidirectional:
             self.model_rev = []
             for i in range(self.layers):
-                self.model_rev.append(LSTMCell(input_dim, hidden_dim, xavier_init))
+                self.model_rev.append(LSTMCell(input_dim, hidden_dim, layernorm))
             self.model_rev = nn.ModuleList(self.model_rev)
 
     def forward(self, x, hidden_state, cell_state, device=None):
@@ -227,28 +238,6 @@ class LSTM(nn.Module):
 
         return output, (hidden_states, cell_states)
 
-
-class LayerNorm(nn.Module):
-    """ Implements LayerNorm
-
-    Creates a LayerNorm layer with adaptable gain (gamma) and bias (beta)
-
-    Parameters
-    ==========
-    features: Dimension of the layers preceding the LayerNorm layer
-
-    """
-
-    def __init__(self, features, eps=1e-6):
-        super().__init__()
-        self.gamma = nn.Parameter(torch.ones(features))
-        self.beta = nn.Parameter(torch.zeros(features))
-        self.eps = eps
-
-    def forward(self, x):
-        mean = x.mean(-1, keepdim=True)
-        std = x.std(-1, keepdim=True)
-        return self.gamma * (x - mean) / (std + self.eps) + self.beta
 
 
 # Below class was the inital bare-bones implementation

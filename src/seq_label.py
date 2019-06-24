@@ -6,12 +6,12 @@ import json
 import time
 from matplotlib import pyplot as plt
 
-from lstm import LSTM, LayerNorm
+from lstm import LSTM
 
 from sklearn.metrics import confusion_matrix, f1_score, classification_report
 
 
-class LSTM_SeqLabel(nn.Module):
+class LSTMSeqLabel(nn.Module):
     """ LSTM Class for Sequence Labelling (many-to-one)
 
     The class creates the LSTM architecture as specified by the parameters.
@@ -44,15 +44,11 @@ class LSTM_SeqLabel(nn.Module):
             self.embedding.weight.requires_grad = False
 
         self.lstm = LSTM(input_dim=embed_dim, hidden_dim=hidden_dim, layers=layers,
-                         bidirectional=bidirectional)
+                         bidirectional=bidirectional, layernorm=layernorm)
         if self.bidirectional:
             self.fc = nn.Linear(2 * hidden_dim, output_dim)
         else:
             self.fc = nn.Linear(hidden_dim, output_dim)
-        if self.layernorm and self.bidirectional:
-            self.layernorm = LayerNorm(2 * hidden_dim)
-        elif self.layernorm:
-            self.layernorm = LayerNorm(hidden_dim)
 
     def forward(self, x, hidden_state, cell_state):
         embed = self.embedding(x)
@@ -61,11 +57,7 @@ class LSTM_SeqLabel(nn.Module):
         if self.bidirectional:
             # Flattening hidden state for the 2 directions in bidirectional
             hidden_state = torch.cat((hidden_state[:,0,:,:], hidden_state[:,1,:,:]), dim=2)
-        # hidden_state = hidden_state[-1]
-        if self.layernorm:
-            output = self.fc(self.layernorm(hidden_state))
-        else:
-            output = self.fc(hidden_state)
+        output = self.fc(hidden_state)
         return output
 
     def save(self, file_path='./model.pkl'):
@@ -83,12 +75,14 @@ class LSTM_SeqLabel(nn.Module):
 ## Sentiment Analysis network - using PyTorch LSTM module
 class SentimentNetworkBaseline(nn.Module):
 
-    def __init__(self, n_input, n_embed, n_hidden, n_output, pretrained_vec=None, layers=1, bidirectional=False):
+    def __init__(self, n_input, n_embed, n_hidden, n_output, pretrained_vec=None,
+                 layers=1, bidirectional=False, layernorm=False):
         super().__init__()
 
         self.hidden_dim = n_hidden
         self.bidirectional = bidirectional
         self.layers = layers
+        self.layernorm = layernorm
 
         self.embedding = nn.Embedding(n_input, n_embed)
         # not training embedding layer if pretrained embedding is provided
@@ -101,17 +95,35 @@ class SentimentNetworkBaseline(nn.Module):
             self.fc = nn.Linear(2 * n_hidden, n_output)
         else:
             self.fc = nn.Linear(n_hidden, n_output)
+        if self.layernorm and self.bidirectional:
+            self.ln = LayerNorm(2 * self.hidden_dim)
+        elif self.layernorm:
+            self.ln = LayerNorm(self.hidden_dim)
 
     def forward(self, x, h, c):
         embed = self.embedding(x)
         _, (h, _) = self.lstm(embed, (h, c))
-        h = h[-1].h(0)
+        h = h[-1].unsqueeze(0)
         if self.bidirectional:
             h = h.view(self.layers, 2, embed.shape[1], self.hidden_dim)
             # Flattening hidden state for the 2 directions in bidirectional
             h = torch.cat((h[:,0,:,:], h[:,1,:,:]), dim=2)
-        y = self.fc(h) #h.squeeze(0))
-        return y
+        if self.layernorm:
+            output = self.fc(self.ln(h))
+        else:
+            output = self.fc(h)
+        return output
+
+    def save(self, file_path='./model.pkl'):
+        torch.save(self.state_dict(), file_path)
+
+    def load(self, file_path):
+        self.load_state_dict(torch.load(file_path))
+
+    def count_parameters(self):
+        tot_sum = sum(p.numel() for p in self.lstm.parameters() if p.requires_grad)
+        tot_sum += sum(p.numel() for p in self.fc.parameters() if p.requires_grad)
+        return tot_sum
 
 
 class SeqLabel():
