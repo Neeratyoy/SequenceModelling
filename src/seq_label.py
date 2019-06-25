@@ -204,7 +204,7 @@ class SeqLabel():
         """
         print("Beginning training model with {} parameters\n".format(self.model.count_parameters()))
         self.stats = {'loss': [], 'train_score': [], 'valid_score': [], 'epoch': [],
-                      'train_loss': [], 'valid_loss': []}
+                      'train_loss': [], 'valid_loss': [], 'wallclock': []}
         self.freq = freq
         start_training = time.time()
         for i in range(1, epochs+1):
@@ -228,7 +228,7 @@ class SeqLabel():
                 self.optimizer.step()
 
                 # print(".", end='') # for colab (comment below print)
-                print("Epoch #{}: Batch {}/{} -- Loss = {}; " 
+                print("Epoch #{}: Batch {}/{} -- Loss = {}; "
                       "Time taken: {}s".format(i, j, len(train_loader),
                                                loss.item(), time.time() - start), end='\r')
                 loss_tracker.append(loss.item())
@@ -241,7 +241,8 @@ class SeqLabel():
                 f1, train_loss = self.evaluate(train_loader, verbose=False)
                 self.stats['train_score'].append(f1)
                 self.stats['train_loss'].append(train_loss)
-                self.stats['epoch'].append(i+1)
+                self.stats['epoch'].append(i)
+                self.stats['wallclock'].append(time.time() - start_training)
                 print("Epoch #{}: Train F1-score is {}".format(i, self.stats['train_score'][-1]))
                 self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i+1)))
                 self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
