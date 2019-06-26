@@ -223,7 +223,7 @@ class LSTM(nn.Module):
                                                                         hidden_states_rev[j].clone(),
                                                                         cell_states_rev[j].clone())
             # flipping outputs to be in correct timestep order
-            output = torch.flip(output, [0]) # reversing only the sequence dimension
+            output_rev = torch.flip(output_rev, [0]) # reversing only the sequence dimension
             # last_layer_output_rev = o_rev
             hidden_states_rev = hidden_states_rev.view(self.layers, hidden_states_rev.shape[-2],
                                                        hidden_states_rev.shape[-1])
