@@ -52,11 +52,15 @@ class LSTMSeqLabel(nn.Module):
 
     def forward(self, x, hidden_state, cell_state):
         embed = self.embedding(x)
-        _, (hidden_state, _) = self.lstm(embed, hidden_state, cell_state)
-        hidden_state = hidden_state[-1].unsqueeze(0)
+        output, (_, _) = self.lstm(embed, hidden_state, cell_state)
         if self.bidirectional:
-            # Flattening hidden state for the 2 directions in bidirectional
-            hidden_state = torch.cat((hidden_state[:,0,:,:], hidden_state[:,1,:,:]), dim=2)
+            ### Flattening output for the 2 directions in bidirectional
+            # Taking the last output for Left-to-Right (t=T)
+            # Taking the last output for Right-to-left (t=1)
+            output = torch.cat((output[-1,:,0,:], output[0,:,1,:]), dim=1)
+            output = output[-1].unsqueeze(0)
+        else:
+            output = output[-1].unsqueeze(0)
         output = self.fc(hidden_state)
         return output
 

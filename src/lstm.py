@@ -83,7 +83,7 @@ class LSTMCell(nn.Module):
     ==========
     input_dim: Dimension of input data
     hidden_dim: Size of hidden state
-    output_dim: Dimension of outputs for each input
+    layernorm: True/False
 
     """
 
@@ -166,6 +166,20 @@ class LSTMCell(nn.Module):
 
 
 class LSTM(nn.Module):
+    """A complete LSTM architecture
+
+    Allows to stack multiple LSTM cells and also
+    create a bidirectional LSTM network.
+
+    Parameters
+    ==========
+    input_dim: Dimension of input data
+    hidden_dim: Size of hidden state
+    layernorm: True/False
+    layers: Number of LSTM cells to stack
+    bidirectional: True/False
+
+    """
     def __init__(self, input_dim, hidden_dim, layers=1, bidirectional=False, layernorm=False):
         super().__init__()
         self.input_dim = input_dim
@@ -187,6 +201,42 @@ class LSTM(nn.Module):
             self.model_rev = nn.ModuleList(self.model_rev)
 
     def forward(self, x, hidden_state, cell_state, device=None):
+        """Forward pass for the LSTM network
+
+        Parameters
+        ==========
+        x: [sequence_length, batch_size, input_dim]
+        hidden_state: [1, batch_size, hidden_dim]
+        cell_state: [1, batch_size, hidden_dim]
+
+        Returns
+        =======
+        output, (hidden_state, cell_state)
+        If bidirectional=False
+            output: [sequence_length, batch_size, hidden_dim]
+                contains the output/hidden_state from all the timesteps
+                for the final layer in sequence 1...T
+            hidden_state: [1, batch_size, hidden_dim]
+                contains the hidden_state from the last timestep T
+                from all the layers
+            cell_state: [1, batch_size, hidden_dim]
+                contains the cell_state from the last timestep T
+                from all the layers
+        If bidirectional=True
+            output: [sequence_length, batch_size, 2, hidden_dim]
+                contains the output/hidden_state from all the timesteps
+                for the final layer in sequence 1...T
+                [:,:,0,:] contains output from Left-to-Right network
+                [:,:,1,:] contains output from to-Right-to-Left network
+            hidden_state: [layers, 2, batch_size, hidden_dim]
+            cell_state: [layers, 2, batch_size, hidden_dim]
+                [:,0,:,:] contains output from Left-to-Right network
+                    contains the output for the last timestep (t=T) with
+                    layer 1...layer N as index [0:N-1,:,:,:]
+                [:,1,:,:] contains output from to-Right-to-Left network
+                    contains the output for the last timestep (t=1) with
+                    layer 1...layer N as index [0:N-1,:,:,:]
+        """
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         seq_length = x.shape[0]
