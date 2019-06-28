@@ -58,10 +58,10 @@ class LSTMSeqLabel(nn.Module):
             # Taking the last output for Left-to-Right (t=T)
             # Taking the last output for Right-to-left (t=1)
             output = torch.cat((output[-1,:,0,:], output[0,:,1,:]), dim=1)
-            output = output[-1].unsqueeze(0)
+            output = output.unsqueeze(0)
         else:
             output = output[-1].unsqueeze(0)
-        output = self.fc(hidden_state)
+        output = self.fc(output)
         return output
 
     def save(self, file_path='./model.pkl'):
@@ -249,13 +249,12 @@ class SeqLabel():
                 self.stats['wallclock'].append(time.time() - start_training)
                 print("Epoch #{}: Train F1-score is {}".format(i, self.stats['train_score'][-1]))
                 self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i+1)))
-                self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
-
                 if valid_loader is not None:
                     f1, val_loss = self.evaluate(valid_loader, verbose=False)
                     self.stats['valid_score'].append(f1)
                     self.stats['valid_loss'].append(val_loss)
                     print("Epoch #{}: Validation F1-score is {}".format(i, self.stats['valid_score'][-1]))
+                self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
             print("Time taken for epoch: {}s".format(time.time() - start_epoch))
             print()
 
