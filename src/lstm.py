@@ -71,6 +71,7 @@ class RNNCell(nn.Module):
         return output, hidden
 
 
+
 class LSTMCell(nn.Module):
     """A vanilla LSTM cell
 
@@ -106,26 +107,30 @@ class LSTMCell(nn.Module):
 
         self.init_weights()
 
-    def forward(self, x, hidden_state, cell_state, device=None):
-        if device is None:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        # Carries out the forward pass one timestep at a time
+    def forward(self, x, hidden_state, cell_state):
         timesteps = x.shape[0]
+        device = 'cpu'
+        if x.is_cuda:
+            device = 'cuda'
         output = torch.tensor([]).float().to(device)
+        # Carries out the forward pass one timestep at a time
         for x_t in x:
             cell_state, hidden_state = self.forward_pass(x_t.unsqueeze(0),
-                                                         hidden_state, cell_state, device)
+                                                         hidden_state, cell_state)
             output = torch.cat((output, hidden_state), dim=0)
         return output, (hidden_state, cell_state)
 
-    def forward_pass(self, x, hidden_state, old_state, device=None):
+    def forward_pass(self, x, hidden_state, old_state):
+        device = 'cpu'
+        if x.is_cuda:
+            device = 'cuda'
         # Design and notations from:
         #    https://colah.github.io/posts/2015-08-Understanding-LSTMs/
 
         # h^{t-1}x^t
-        concat_inputs = torch.cat((x, hidden_state), dim=2).to(device)
+        x = torch.cat((x, hidden_state), dim=2).to(device)
 
-        gates = torch.matmul(concat_inputs, self.weights) + self.bias
+        gates = torch.matmul(x, self.weights) + self.bias
         if self.layernorm:
             gates = self.ln_gates(gates)
 
@@ -189,7 +194,7 @@ class LSTM(nn.Module):
         self.layernorm = layernorm
 
         if self.layers < 1:
-            raise ValueError("layers need to be > 1")
+            raise ValueError("layers need to be >= 1")
         self.model = []
         for i in range(self.layers):
             self.model.append(LSTMCell(input_dim, hidden_dim, layernorm))
@@ -200,7 +205,7 @@ class LSTM(nn.Module):
                 self.model_rev.append(LSTMCell(input_dim, hidden_dim, layernorm))
             self.model_rev = nn.ModuleList(self.model_rev)
 
-    def forward(self, x, hidden_state, cell_state, device=None):
+    def forward(self, x, hidden_state, cell_state):
         """Forward pass for the LSTM network
 
         Parameters
@@ -237,21 +242,21 @@ class LSTM(nn.Module):
                     contains the output for the last timestep (t=1) with
                     layer 1...layer N as index [0:N-1,:,:,:]
         """
-        if device is None:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = 'cpu'
+        if x.is_cuda:
+            device = 'cuda'
         seq_length = x.shape[0]
         # Left-to-right pass
         # index of state is equivalent to index of layer in LSTM stack
-        hidden_states = torch.cat(tuple(hidden_state.clone().unsqueeze(0)
-                                        for i in range(self.layers)), dim=0)
-        cell_states = torch.cat(tuple(cell_state.clone().unsqueeze(0)
-                                      for i in range(self.layers)), dim=0)
+        hidden_states = hidden_state.view(hidden_state.shape[0], 1,
+                                           hidden_state.shape[1], hidden_state.shape[2])
+        cell_states = cell_state.view(cell_state.shape[0], 1,
+                                       cell_state.shape[1], cell_state.shape[2])
         output = torch.tensor([], requires_grad=True).to(device)
         # forward pass for one cell at a time
         for j in range(self.layers):
             output, (hidden_states[j], cell_states[j]) = self.model[j](x, hidden_states[j].clone(),
-                                                                  cell_states[j].clone(),
-                                                                  device)
+                                                                  cell_states[j].clone())
         hidden_states = hidden_states.view(self.layers, hidden_states.shape[-2],
                                            hidden_states.shape[-1])
         cell_states = cell_states.view(self.layers, cell_states.shape[-2],
@@ -262,10 +267,10 @@ class LSTM(nn.Module):
             # flipping inputs/rearranging x to be in reverse timestep order
             x = torch.flip(x, [0])  # reversing only the sequence dimension
             # index of state is equivalent to index of layer in LSTM stack
-            hidden_states_rev = torch.cat(tuple(hidden_state.clone().unsqueeze(0)
-                                                for i in range(self.layers)), dim=0)
-            cell_states_rev = torch.cat(tuple(cell_state.clone().unsqueeze(0)
-                                              for i in range(self.layers)), dim=0)
+            hidden_states_rev = hidden_state.view(hidden_state.shape[0], 1,
+                                               hidden_state.shape[1], hidden_state.shape[2])
+            cell_states_rev = cell_state.view(cell_state.shape[0], 1,
+                                           cell_state.shape[1], cell_state.shape[2])
             output_rev = torch.tensor([], requires_grad=True).to(device)
             # forward pass for one cell at a time
             for j in range(self.layers):
@@ -287,11 +292,10 @@ class LSTM(nn.Module):
                                        hidden_states_rev.unsqueeze(1)), dim=1)
             cell_states = torch.cat((cell_states.unsqueeze(1),
                                      cell_states_rev.unsqueeze(1)), dim=1)
-            output = torch.cat((output.unsqueeze(2),
-                                output_rev.unsqueeze(2)), dim=2)
+            output = torch.cat((output,
+                                output_rev), dim=2)
 
         return output, (hidden_states, cell_states)
-
 
 
 # Below class was the inital bare-bones implementation
