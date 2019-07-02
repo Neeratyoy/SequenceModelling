@@ -73,7 +73,7 @@ class LSTMSeqLabel(nn.Module):
 
 
 ## Sentiment Analysis network - using PyTorch LSTM module
-class SentimentNetworkBaseline(nn.Module):
+class BaselineSeqLabel(nn.Module):
 
     def __init__(self, n_input, n_embed, n_hidden, n_output, pretrained_vec=None,
                  layers=1, bidirectional=False, layernorm=False):
@@ -96,22 +96,17 @@ class SentimentNetworkBaseline(nn.Module):
         else:
             self.fc = nn.Linear(n_hidden, n_output)
         if self.layernorm and self.bidirectional:
-            self.ln = LayerNorm(2 * self.hidden_dim)
+            self.ln = nn.LayerNorm(2 * self.hidden_dim)
         elif self.layernorm:
-            self.ln = LayerNorm(self.hidden_dim)
+            self.ln = nn.LayerNorm(self.hidden_dim)
 
     def forward(self, x, h, c):
         embed = self.embedding(x)
         _, (h, _) = self.lstm(embed, (h, c))
         h = h[-1].unsqueeze(0)
-        if self.bidirectional:
-            h = h.view(self.layers, 2, embed.shape[1], self.hidden_dim)
-            # Flattening hidden state for the 2 directions in bidirectional
-            h = torch.cat((h[:,0,:,:], h[:,1,:,:]), dim=2)
         if self.layernorm:
-            output = self.fc(self.ln(h))
-        else:
-            output = self.fc(h)
+            h = self.ln(h)
+        output = self.fc(h)
         return output
 
     def save(self, file_path='./model.pkl'):
@@ -137,7 +132,7 @@ class SeqLabel():
         model's forward() should take 3 arguments - input, hidden_state, cell_state
     optimizer: an initialized nn.optim functional
     loss_fn: an initialized nn loss functional
-    device: {"cpu", "cuda"}
+    device: A torch device object {"cpu", "cuda"}
 
     """
     def __init__(self, model, optimizer, loss_fn, device=None):
