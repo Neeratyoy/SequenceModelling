@@ -45,7 +45,6 @@ class LSTMSeq2SeqSame(nn.Module):
             self.fc = nn.Linear(2 * hidden_dim, output_dim)
         else:
             self.fc = nn.Linear(hidden_dim, output_dim)
-        self.softmax = nn.Softmax(dim=2)
 
     def forward(self, x, hidden_state, cell_state):
         output, (_, _) = self.lstm(x, hidden_state, cell_state)
@@ -54,7 +53,6 @@ class LSTMSeq2SeqSame(nn.Module):
         output = self.fc(output.view(-1, output.shape[-1]))
         # reshaping to have (seq_len, batch, output)
         output = output.view(orig_dims[0], orig_dims[1], output.shape[1])
-        output = self.softmax(output)
         return output
 
     def save(self, file_path='./model.pkl'):
@@ -103,7 +101,6 @@ class PyTorchBaseline(nn.Module):
             self.fc = nn.Linear(2 * hidden_dim, output_dim)
         else:
             self.fc = nn.Linear(hidden_dim, output_dim)
-        self.softmax = nn.Softmax(dim=2)
 
     def forward(self, x, hidden_state, cell_state):
         output, (_, _) = self.lstm(x, (hidden_state, cell_state))
@@ -112,7 +109,6 @@ class PyTorchBaseline(nn.Module):
         output = self.fc(output.view(-1, output.shape[-1]))
         # reshaping to have (seq_len, batch, output)
         output = output.view(orig_dims[0], orig_dims[1], output.shape[1])
-        output = self.softmax(output)
         return output
 
     def save(self, file_path='./model.pkl'):
@@ -241,11 +237,12 @@ class Seq2SeqSame():
 
                 # forward pass
                 output = self.model(text, hidden_state, cell_state)
+                # reshape to have (N, classes)
+                output = output.contiguous().view(-1, output.shape[-1])
+                label = label.contiguous().view(-1)
                 # backward pass for the batch (+ weight updates)
                 self.optimizer.zero_grad()
-                # reshape to have (N, classes)
-                loss = self.loss_criterion(output.contiguous().view(-1, output.shape[-1]),
-                                           label.contiguous().view(-1))
+                loss = self.loss_criterion(output, label.contiguous().view(-1))
                 loss.backward()
                 self.optimizer.step()
 
