@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 
 from lstm import LSTM
 
-from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
+from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, f1_score
 
 
 class LSTMSeq2SeqSame(nn.Module):
@@ -163,12 +163,10 @@ class Seq2SeqSame():
     def plot_stats(self, stats=None, freq=None, out_dir='./'):
         if stats is None:
             stats = self.stats
-        if freq is None:
-            freq = self.freq
-        x = np.arange(start=freq, stop=freq * (len(stats['epoch']) + 1),
-                      step=freq)
+        x = np.arange(start=0, stop=freq * (len(stats['epoch'])), step=freq)
+        x[0] = 1
         self.plot_history(stats['train_score'], stats['valid_score'], x,
-                          os.path.join(out_dir, 'accuracy.png'), 'accuracy')
+                          os.path.join(out_dir, 'wer.png'), 'wer')
         self.plot_history(stats['train_loss'], stats['valid_loss'], x,
                           os.path.join(out_dir, 'loss.png'), 'loss')
 
@@ -181,7 +179,8 @@ class Seq2SeqSame():
             self.stats = json.load(f)
         return self.stats
 
-    def train(self, epochs, train_loader, valid_loader=None, freq=10, out_dir='./', create_dir=True):
+    def train(self, epochs, train_loader, valid_loader=None, freq=10, out_dir='./',
+              vocab=None, wer_dict=None, create_dir=True):
         """ Function to train the model and save statistics
 
         Parameters
@@ -256,30 +255,32 @@ class Seq2SeqSame():
             print()
             print("Epoch #{}: Average loss is {}".format(i, self.stats['loss'][-1]))
             if i % freq == 0 or i == 1:
-                accuracy, train_loss = self.evaluate(train_loader, verbose=False)
+                accuracy, train_loss = self.evaluate(train_loader, vocab,
+                                                     wer_dict, verbose=False)
                 self.stats['train_score'].append(accuracy)
                 self.stats['train_loss'].append(train_loss)
                 self.stats['epoch'].append(i)
                 self.stats['wallclock'].append(time.time() - start_training)
+                print("Epoch #{}: Train WER is {}".format(i, self.stats['train_score'][-1]))
 
                 if valid_loader is not None:
-                    accuracy, val_loss = self.evaluate(valid_loader, verbose=False)
+                    accuracy, val_loss = self.evaluate(valid_loader, vocab,
+                                                       wer_dict, verbose=False)
                     self.stats['valid_score'].append(accuracy)
                     self.stats['valid_loss'].append(val_loss)
-                    print("Epoch #{}: Validation Accuracy is {}".format(i, self.stats['valid_score'][-1]))
+                    print("Epoch #{}: Validation WER is {}".format(i, self.stats['valid_score'][-1]))
 
-                print("Epoch #{}: Train Accuracy is {}".format(i, self.stats['train_score'][-1]))
                 self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i)))
                 self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
 
             print("Time taken for epoch: {}s".format(time.time() - start_epoch))
             print()
 
-        self.plot_stats(out_dir=out_dir)
+        self.plot_stats(freq=freq, out_dir=out_dir)
         print("Training completed in {}s".format(time.time() - start_training))
         return self.model, self.stats
 
-    def evaluate(self, test_loader, verbose=True):
+    def evaluate(self, test_loader, vocab=None, wer_dict=None, verbose=True):
         """ Function to evaluate the model and return F-score
 
         epochs: Number of epochs
@@ -329,10 +330,17 @@ class Seq2SeqSame():
 
                 preds.extend(pred)
                 labels.extend(label)
+
                 losses.append(loss.item())
+
+        vocab = np.array(vocab)
+        scores = []
+        scores = [wer_dict[str(vocab[labels[i]])][str(vocab[preds[i]])] for i in range(len(preds))]
+        wer_score = np.mean(scores)
 
         if verbose:
             print('Confusion Matrix: \n', confusion_matrix(labels, preds))
+            print()
             print('Classification Report: \n', classification_report(labels, preds))
 
-        return accuracy_score(labels, preds), np.mean(losses)
+        return wer_score, np.mean(losses)

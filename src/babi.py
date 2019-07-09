@@ -1,8 +1,9 @@
 import random
 import re
 import os
-from collections import OrderedDict
 import numpy as np
+from jiwer import wer
+from collections import OrderedDict
 from sklearn.preprocessing import OneHotEncoder
 
 import torch
@@ -10,9 +11,10 @@ from torch.utils.data import DataLoader, TensorDataset, random_split
 
 
 class babiDataset():
-    def __init__(self, split_ratio=0.8, seed=None, device=None):
+    def __init__(self, task=1, split_ratio=0.8, seed=None, device=None):
         self.split_ratio = split_ratio
         self.seed = seed
+        self.task = task
         random.seed(self.seed)
         self.random_state = random.getstate()
         if device is None:
@@ -42,9 +44,19 @@ class babiDataset():
         # download dataset if file not present locally
         self._download()
 
-        with open(os.path.join(self.dest, 'en-10k/qa1_single-supporting-fact_train.txt'), 'r') as f:
+        if self.task == 1:
+            train_file = 'en-10k/qa{}_{}-supporting-fact_train.txt'.format(1, 'single')
+            test_file = 'en-10k/qa{}_{}-supporting-fact_test.txt'.format(1, 'single')
+        elif self.task == 2:
+            train_file = 'en-10k/qa{}_{}-supporting-facts_train.txt'.format(2, 'two')
+            test_file = 'en-10k/qa{}_{}-supporting-facts_test.txt'.format(2, 'two')
+        else:
+            raise ValueError("Only tasks {1,2} are supported.")
+
+
+        with open(os.path.join(self.dest, train_file), 'r') as f:
             train_lines = f.readlines()
-        with open(os.path.join(self.dest, 'en-10k/qa1_single-supporting-fact_test.txt'), 'r') as f:
+        with open(os.path.join(self.dest, test_file), 'r') as f:
             test_lines = f.readlines()
 
         # parse train & test data into text and labels
@@ -72,14 +84,20 @@ class babiDataset():
             print('Validation data size: ', len(self.valid_data.indices))
             print('Test data size:       ', len(self.test_data.tensors[0]))
 
-    def build_vocab(self, dim=300, max_vocab_size=25000):
-        pass
+    def build_vocab_wer(self):
+        self.wer_dict = {}
+        if not hasattr(self, 'vocab'):
+            self.load()
+        for word1 in self.vocab:
+            self.wer_dict[word1] = {}
+            for word2 in self.vocab:
+                self.wer_dict[word1][word2] = wer(str(word1), str(word2))
 
     def create_data_loader(self, batch_size=64):
         if not hasattr(self, "train_data") or not hasattr(self, "TEXT") or not hasattr(self, "LABEL"):
             self.load()
         if not hasattr(self, "max_vocab_size") or not hasattr(self, "dim"):
-            self.build_vocab()
+            self.build_vocab_wer()
         # creating loader
         ## data loader equivalent in torchtext batch iterator - buckets similar lengths together
         self.batch_size = batch_size

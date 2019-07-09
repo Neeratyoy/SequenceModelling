@@ -77,7 +77,7 @@ class LSTMSeqLabel(nn.Module):
 
 
 ## Sentiment Analysis network - using PyTorch LSTM module
-class SentimentNetworkBaseline(nn.Module):
+class PyTorchBaseline(nn.Module):
 
     def __init__(self, n_input, n_embed, n_hidden, n_output, pretrained_vec=None,
                  layers=1, bidirectional=False, layernorm=False):
@@ -99,23 +99,12 @@ class SentimentNetworkBaseline(nn.Module):
             self.fc = nn.Linear(2 * n_hidden, n_output)
         else:
             self.fc = nn.Linear(n_hidden, n_output)
-        if self.layernorm and self.bidirectional:
-            self.ln = LayerNorm(2 * self.hidden_dim)
-        elif self.layernorm:
-            self.ln = LayerNorm(self.hidden_dim)
 
     def forward(self, x, h, c):
         embed = self.embedding(x)
-        _, (h, _) = self.lstm(embed, (h, c))
-        h = h[-1].unsqueeze(0)
-        if self.bidirectional:
-            h = h.view(self.layers, 2, embed.shape[1], self.hidden_dim)
-            # Flattening hidden state for the 2 directions in bidirectional
-            h = torch.cat((h[:,0,:,:], h[:,1,:,:]), dim=2)
-        if self.layernorm:
-            output = self.fc(self.ln(h))
-        else:
-            output = self.fc(h)
+        output, (_, _) = self.lstm(embed, (h, c))
+        output = output[-1].unsqueeze(0)
+        output = self.fc(output)
         return output
 
     def save(self, file_path='./model.pkl'):
@@ -169,12 +158,10 @@ class SeqLabel():
     def plot_stats(self, stats=None, freq=None, out_dir='./'):
         if stats is None:
             stats = self.stats
-        if freq is None:
-            freq = self.freq
-        x = np.arange(start=freq, stop=freq * (len(stats['epoch']) + 1),
-                      step=freq)
+        x = np.arange(start=0, stop=freq * (len(stats['epoch'])), step=freq)
+        x[0] = 1
         self.plot_history(stats['train_score'], stats['valid_score'], x,
-                          os.path.join(out_dir, 'f1_score.png'), 'f1 score')
+                          os.path.join(out_dir, 'f1.png'), 'f1')
         self.plot_history(stats['train_loss'], stats['valid_loss'], x,
                           os.path.join(out_dir, 'loss.png'), 'loss')
 
@@ -218,10 +205,16 @@ class SeqLabel():
             for j, batch in enumerate(train_loader, start=1):
                 # generate initial hidden & cell states
                 start = time.time()
-                hidden_state = torch.zeros(1, batch.label.shape[0],
-                                           self.model.hidden_dim, requires_grad=True).to(self.device)
-                cell_state = torch.zeros(1, batch.label.shape[0],
-                                         self.model.hidden_dim, requires_grad=True).to(self.device)
+                if self.model.bidirectional:
+                    hidden_state = torch.zeros(2 * self.model.layers, batch,
+                                               self.model.hidden_dim).to(self.device)
+                    cell_state = torch.zeros(2 * self.model.layers, batch,
+                                             self.model.hidden_dim).to(self.device)
+                else:
+                    hidden_state = torch.zeros(self.model.layers, batch,
+                                               self.model.hidden_dim).to(self.device)
+                    cell_state = torch.zeros(self.model.layers, batch,
+                                             self.model.hidden_dim).to(self.device)
 
                 # forward pass
                 output = self.model(batch.text, hidden_state, cell_state)
@@ -241,7 +234,7 @@ class SeqLabel():
 
             print()
             print("Epoch #{}: Average loss is {}".format(i, self.stats['loss'][-1]))
-            if i % freq == 0:
+            if i % freq == 0 or i == 1:
                 f1, train_loss = self.evaluate(train_loader, verbose=False)
                 self.stats['train_score'].append(f1)
                 self.stats['train_loss'].append(train_loss)
@@ -285,10 +278,16 @@ class SeqLabel():
 
         with torch.no_grad():
             for batch in test_loader:
-                hidden_state = torch.zeros(1, batch.label.shape[0],
-                                           self.model.hidden_dim).to(self.device)
-                cell_state = torch.zeros(1, batch.label.shape[0],
-                                         self.model.hidden_dim).to(self.device)
+                if self.model.bidirectional:
+                    hidden_state = torch.zeros(2 * self.model.layers, batch,
+                                               self.model.hidden_dim).to(self.device)
+                    cell_state = torch.zeros(2 * self.model.layers, batch,
+                                             self.model.hidden_dim).to(self.device)
+                else:
+                    hidden_state = torch.zeros(self.model.layers, batch,
+                                               self.model.hidden_dim).to(self.device)
+                    cell_state = torch.zeros(self.model.layers, batch,
+                                             self.model.hidden_dim).to(self.device)
                 output = self.model(batch.text, hidden_state, cell_state)
                 output = output.view(output.shape[1])
                 loss = self.loss_criterion(output, batch.label)
