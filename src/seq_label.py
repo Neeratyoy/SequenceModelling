@@ -5,11 +5,15 @@ import os
 import json
 import time
 from matplotlib import pyplot as plt
-
-from lstm import LSTM
-
 from sklearn.metrics import confusion_matrix, f1_score, classification_report
 
+from lstm import LSTM
+from transformer import PositionalEncoding, Encoder, get_pad_mask
+
+
+## ----------------------------------------------------------------------------
+## LSTM MODELS
+## ----------------------------------------------------------------------------
 
 class LSTMSeqLabel(nn.Module):
     """ LSTM Class for Sequence Labelling (many-to-one)
@@ -23,7 +27,7 @@ class LSTMSeqLabel(nn.Module):
     embed_dim: dimensions of the embeddings
     hidden_dim: number of hidden nodes required
     output_dim: numer of output nodes required (1 for sentiment analysis)
-    pretrained_vec: weights from imdb object
+    pretrained_vec: weights from embedding model (GloVe)
     layers: number of LSTM cells to be stacked for depth
     bidirectional: boolean
     layernorm: boolean
@@ -32,16 +36,18 @@ class LSTMSeqLabel(nn.Module):
     def __init__(self, vocab_len, embed_dim, hidden_dim, output_dim, pretrained_vec,
                  layers=1, bidirectional=False, layernorm=False):
         super().__init__()
+        self.name = 'lstm'
 
         self.hidden_dim = hidden_dim
         self.bidirectional = bidirectional
         self.layernorm = layernorm
+        self.layers = layers
 
         self.embedding = nn.Embedding(vocab_len, embed_dim)
         # not training embedding layer if pretrained embedding is provided
         if pretrained_vec is not None:
-            self.embedding.weight.data.copy_(pretrained_vec)
-            self.embedding.weight.requires_grad = False
+            self.embedding = self.embedding.from_pretrained(
+            pretrained_vec, freeze=True)
 
         self.lstm = LSTM(input_dim=embed_dim, hidden_dim=hidden_dim, layers=layers,
                          bidirectional=bidirectional, layernorm=layernorm)
@@ -71,8 +77,9 @@ class LSTMSeqLabel(nn.Module):
         self.load_state_dict(torch.load(file_path))
 
     def count_parameters(self):
-        tot_sum = sum(p.numel() for p in self.lstm.parameters() if p.requires_grad)
-        tot_sum += sum(p.numel() for p in self.fc.parameters() if p.requires_grad)
+        tot_sum = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        # tot_sum = sum(p.numel() for p in self.lstm.parameters() if p.requires_grad)
+        # tot_sum += sum(p.numel() for p in self.fc.parameters() if p.requires_grad)
         return tot_sum
 
 
@@ -82,6 +89,7 @@ class PyTorchBaseline(nn.Module):
     def __init__(self, n_input, n_embed, n_hidden, n_output, pretrained_vec=None,
                  layers=1, bidirectional=False, layernorm=False):
         super().__init__()
+        self.name = 'lstm'
 
         self.hidden_dim = n_hidden
         self.bidirectional = bidirectional
@@ -91,8 +99,8 @@ class PyTorchBaseline(nn.Module):
         self.embedding = nn.Embedding(n_input, n_embed)
         # not training embedding layer if pretrained embedding is provided
         if pretrained_vec is not None:
-            self.embedding.weight.data.copy_(pretrained_vec)
-            self.embedding.weight.requires_grad = False
+            self.embedding = self.embedding.from_pretrained(
+            pretrained_vec, freeze=True)
 
         self.lstm = nn.LSTM(n_embed, n_hidden, bidirectional=self.bidirectional, num_layers=layers)
         if self.bidirectional:
@@ -114,10 +122,88 @@ class PyTorchBaseline(nn.Module):
         self.load_state_dict(torch.load(file_path))
 
     def count_parameters(self):
-        tot_sum = sum(p.numel() for p in self.lstm.parameters() if p.requires_grad)
-        tot_sum += sum(p.numel() for p in self.fc.parameters() if p.requires_grad)
+        tot_sum = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        # tot_sum = sum(p.numel() for p in self.lstm.parameters() if p.requires_grad)
+        # tot_sum += sum(p.numel() for p in self.fc.parameters() if p.requires_grad)
         return tot_sum
 
+
+## ----------------------------------------------------------------------------
+## TRANSFORMER MODELS
+## ----------------------------------------------------------------------------
+
+class TransformerSeqLabel(nn.Module):
+    """ Transformer Class for Sequence Labelling (many-to-one)
+
+    The class creates the Transformer encoder architecture as specified by the parameters.
+    A fully connected layer is added to reduce the attention to output_dim.
+    The final prediction is averaged over sequence length to get final score
+
+    Parameters
+    ==========
+    in_dim: input vocab size from imdb dataset
+    out_dim: output dimensions of the model
+    model_dim: embedding dimension, also the dimensionality at which the transformer operates
+    key_dim: dimensions for query & key in attention calculation
+    value_dim: dimensions for value in attention calculation
+    ff_dim: dimensions for Positionwise feed-forward sublayer
+    max_len: max length to generate positional encodings (default=10000)
+    batch_first: if batch is the 1st input dimension [seq_len, batch, dim] (default=False)
+    pretrained_vec: weights from embedding model (GloVe)
+    """
+    def __init__(self, in_dim, out_dim, N, heads, model_dim, key_dim, value_dim, ff_dim,
+                 max_len=10000, batch_first=False, pretrained_vec=None):
+        
+        super().__init__()
+        self.name = 'transformer'
+        
+        self.batch_first = batch_first
+        
+        # define layers
+        self.embedding = nn.Embedding(in_dim, model_dim)
+        # not training embedding layer if pretrained embedding is provided
+        if pretrained_vec is not None:
+            self.embedding = self.embedding.from_pretrained(
+            pretrained_vec, freeze=True)
+        self.pos_enc = PositionalEncoding(model_dim, max_len)
+        self.encoder = Encoder(N, heads, model_dim, key_dim, value_dim, ff_dim)
+        # final output layer
+        self.fc = nn.Linear(model_dim, out_dim)
+    
+        # xavier initialization
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform(p)
+
+    def forward(self, x, mask=None):
+        # transpose to use [batch, seq_len, dim]
+        if not self.batch_first:
+            x = x.transpose(0, 1)
+            
+        x = self.embedding(x)
+        x = self.pos_enc(x)
+        x = self.encoder(x, mask)
+        x = self.fc(x)
+        
+        # transpose back to original [seq_len, batch, dim]
+        if not self.batch_first:
+            x = x.transpose(0, 1)
+        return x
+        
+    def save(self, file_path='./model.pkl'):
+        torch.save(self.state_dict(), file_path)
+
+    def load(self, file_path):
+        self.load_state_dict(torch.load(file_path))
+
+    def count_parameters(self):
+        tot_sum = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return tot_sum
+
+
+## ----------------------------------------------------------------------------
+## TASK SPECIFIC METHODS
+## ----------------------------------------------------------------------------
 
 class SeqLabel():
     """ Class to carry out Sequence Labelling (many-to-one)
@@ -140,6 +226,12 @@ class SeqLabel():
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.device = device
+        
+        # get forward call for model
+        if self.model.name == 'transformer':
+            self.forward = self.transformer_forward
+        else:
+            self.forward = self.lstm_forward
 
     def plot_history(self, train, valid=[], epochs=None, file_path='./plot.png', stats='loss'):
         if epochs is None:
@@ -173,6 +265,31 @@ class SeqLabel():
         with open(file_path, 'r') as f:
             self.stats = json.load(f)
         return self.stats
+      
+    def lstm_forward(self, x):
+        ''' calls forward pass for LSTM '''
+        if self.model.bidirectional:
+            hidden_state = torch.zeros(2 * self.model.layers, x.shape[1],
+                                       self.model.hidden_dim).to(self.device)
+            cell_state = torch.zeros(2 * self.model.layers, x.shape[1],
+                                     self.model.hidden_dim).to(self.device)
+        else:
+            hidden_state = torch.zeros(self.model.layers, x.shape[1],
+                                       self.model.hidden_dim).to(self.device)
+            cell_state = torch.zeros(self.model.layers, x.shape[1],
+                                     self.model.hidden_dim).to(self.device)
+        # forward pass
+        output = self.model(x, hidden_state, cell_state)
+        return output
+      
+    def transformer_forward(self, x):
+        ''' calls forward pass for Transformer'''
+        # generating padding mask
+        mask = get_pad_mask(x.transpose(0,1), x.transpose(0,1), pad=1)
+        output = self.model(x, mask)
+        # mean over all attention output (seq_len) for a given sequence
+        output = output.mean(dim=0) 
+        return output
 
     def train(self, epochs, train_loader, valid_loader=None, freq=10, out_dir='./'):
         """ Function to train the model and save statistics
@@ -197,6 +314,11 @@ class SeqLabel():
         self.stats = {'loss': [], 'train_score': [], 'valid_score': [], 'epoch': [],
                       'train_loss': [], 'valid_loss': [], 'wallclock': []}
         self.freq = freq
+        
+        # create output directory if it does not exist
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        
         start_training = time.time()
         for i in range(1, epochs+1):
             loss_tracker = []
@@ -205,19 +327,9 @@ class SeqLabel():
             for j, batch in enumerate(train_loader, start=1):
                 # generate initial hidden & cell states
                 start = time.time()
-                if self.model.bidirectional:
-                    hidden_state = torch.zeros(2 * self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(2 * self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-                else:
-                    hidden_state = torch.zeros(self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-
+                
                 # forward pass
-                output = self.model(batch.text, hidden_state, cell_state)
+                output = self.forward(batch.text)
                 # backward pass for the batch (+ weight updates)
                 self.optimizer.zero_grad()
                 loss = self.loss_criterion(output.view(-1), batch.label)
@@ -278,19 +390,8 @@ class SeqLabel():
 
         with torch.no_grad():
             for batch in test_loader:
-                if self.model.bidirectional:
-                    hidden_state = torch.zeros(2 * self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(2 * self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-                else:
-                    hidden_state = torch.zeros(self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-                output = self.model(batch.text, hidden_state, cell_state)
-                output = output.view(output.shape[1])
-                loss = self.loss_criterion(output, batch.label)
+                output = self.forward(batch.text)
+                loss = self.loss_criterion(output.view(-1), batch.label)
                 # get label predictions - since we predict only probabilities for label 1
                 pred = torch.round(torch.sigmoid(output)).cpu().detach().numpy()
                 preds.extend(pred)

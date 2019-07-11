@@ -5,11 +5,15 @@ import os
 import json
 import time
 from matplotlib import pyplot as plt
-
-from lstm import LSTM
-
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, f1_score
 
+from lstm import LSTM
+from transformer import PositionalEncoding, Encoder, init_weights
+
+
+## ----------------------------------------------------------------------------
+## LSTM MODELS
+## ----------------------------------------------------------------------------
 
 class LSTMSeq2SeqSame(nn.Module):
     """ LSTM Class for Sequence to Sequence (many-to-many same)
@@ -31,6 +35,7 @@ class LSTMSeq2SeqSame(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim,
                  layers=1, bidirectional=False, layernorm=False):
         super().__init__()
+        self.name = 'lstm'
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -87,6 +92,7 @@ class PyTorchBaseline(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim,
                  layers=1, bidirectional=False, layernorm=False):
         super().__init__()
+        self.name = 'lstm'
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -122,6 +128,76 @@ class PyTorchBaseline(nn.Module):
         tot_sum += sum(p.numel() for p in self.fc.parameters() if p.requires_grad)
         return tot_sum
 
+
+## ----------------------------------------------------------------------------
+## TRANSFORMER MODELS
+## ----------------------------------------------------------------------------
+
+class TransformerSeq2SeqSame(nn.Module):
+    """ Transformer Class for Sequence to Sequence (many-to-many same)
+
+    The class creates the Transformer encoder architecture as specified by the parameters.
+    A fully connected layer is added to reduce the attention to output_dim.
+
+    Parameters
+    ==========
+    in_dim: input vocab size from bAbi dataset
+    out_dim: output dimensions of the model
+    model_dim: embedding dimension, also the dimensionality at which the transformer operates
+    key_dim: dimensions for query & key in attention calculation
+    value_dim: dimensions for value in attention calculation
+    ff_dim: dimensions for Positionwise feed-forward sublayer
+    max_len: max length to generate positional encodings (default=10000)
+    batch_first: if batch is the 1st input dimension [seq_len, batch, dim] (default=False)
+    """
+    def __init__(self, in_dim, out_dim, N, heads, model_dim, key_dim, value_dim, ff_dim, max_len=10000, batch_first=False):
+        
+        super().__init__()
+        self.name = 'transformer'
+        
+        self.batch_first = batch_first
+        
+        # define layers
+        self.embed = nn.Linear(in_dim, model_dim)
+        self.pos_enc = PositionalEncoding(model_dim, max_len)
+        self.encoder = Encoder(N, heads, model_dim, key_dim, value_dim, ff_dim)
+        # final output layer
+        self.fc = nn.Linear(model_dim, out_dim)
+
+        # xavier initialization
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform(p)
+    
+    def forward(self, x, mask=None):
+        # transpose to use [batch, seq_len, dim]
+        if not self.batch_first:
+            x = x.transpose(0, 1)
+            
+        x = self.embed(x)
+        x = self.pos_enc(x)
+        x = self.encoder(x, mask)
+        x = self.fc(x)
+        
+        # transpose back to original [seq_len, batch, dim]
+        if not self.batch_first:
+            x = x.transpose(0, 1)
+        return x
+        
+    def save(self, file_path='./model.pkl'):
+        torch.save(self.state_dict(), file_path)
+
+    def load(self, file_path):
+        self.load_state_dict(torch.load(file_path))
+
+    def count_parameters(self):
+        tot_sum = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return tot_sum
+
+        
+## ----------------------------------------------------------------------------
+## TASK SPECIFIC METHODS
+## ----------------------------------------------------------------------------
 
 class Seq2SeqSame():
     """ Class to carry out Sequence 2 Sequence (many-to-many same)
