@@ -7,12 +7,15 @@ import random
 
 
 class IMDB_dataset():
-    def __init__(self, split_ratio=0.8, seed=None):
+    def __init__(self, split_ratio=0.8, seed=None, device=None):
         self.split_ratio = split_ratio
         self.seed = seed
         random.seed(self.seed)
         self.random_state = random.getstate()
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if device is None:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = device
+
 
     def load(self, split_ratio=None, random_state=None, verbose=False):
         if split_ratio is None:
