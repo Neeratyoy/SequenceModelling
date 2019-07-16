@@ -180,20 +180,24 @@ class PyTorchBaseline(nn.Module):
         return tot_sum
 
 
-def create_ncopy_task(sequence_length, n_copy, batch_size, train_test_ratio, train_valid_ratio=None):
+def create_ncopy_task(sequence_length, n_copy, batch_size, train_test_ratio,
+                      train_valid_ratio=None, verbose=True):
     # Generating data
     state_size = sequence_length  # sequence length
     # sequence_length = state_size
-    data_size = min(pow(2, state_size), 5000)
+    data_size = min(pow(2, state_size), 10000)
 
-    if state_size > 15:
-        data_x = np.random.randint(0, 2, (data_size, sequence_length))
+    if state_size > 14:
+        selections = np.random.randint(low=0, high=pow(2, state_size), size=data_size)
+        data_x = []
+        for i in selections:
+            data_x.append([int(x) for x in list(np.binary_repr(i, width=state_size))])
     else:
         data_x = []
         # generating all possible binary numbers in the range of [0, 2^state_size]
         for i in range(data_size):
             data_x.append([int(x) for x in list(np.binary_repr(i, width=state_size))])
-        data_x = np.array(data_x)
+    data_x = np.array(data_x)
 
     data_y = data_x.copy()
     for i in range(n_copy - 1):
@@ -217,6 +221,10 @@ def create_ncopy_task(sequence_length, n_copy, batch_size, train_test_ratio, tra
     train_y = data_y[:, :int(train_size * len(ordering)), :]
     test_x = data_x[:, int(train_size * len(ordering)):, :]
     test_y = data_y[:, int(train_size * len(ordering)):, :]
+
+    if verbose:
+        print(train_x.shape, train_y.shape)
+        print(test_x.shape, test_y.shape)
 
     # Creating training and validation sets
     if train_valid_ratio is not None:
@@ -453,7 +461,7 @@ class Seq2SeqDifferent():
 
                 pred = torch.argmax(o, 2, keepdim=True).view(-1).cpu().detach().numpy()
                 preds.extend(pred)
-                label = torch.argmax(y, 2, keepdim=True).view(-1).cpu().detach().numpy()
+                label = gt.cpu().detach().numpy()
                 labels.extend(label)
                 losses.append(loss.item())
         loss = np.mean(losses)
