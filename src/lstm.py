@@ -195,14 +195,14 @@ class LSTM(nn.Module):
 
         if self.layers < 1:
             raise ValueError("layers need to be > 1")
-        self.model = []
-        for i in range(self.layers):
-            self.model.append(LSTMCell(input_dim, hidden_dim, layernorm))
+        self.model = [LSTMCell(input_dim, hidden_dim, layernorm)]
+        for i in range(1, self.layers):
+            self.model.append(LSTMCell(hidden_dim, hidden_dim, layernorm))
         self.model = nn.ModuleList(self.model)
         if self.bidirectional:
-            self.model_rev = []
-            for i in range(self.layers):
-                self.model_rev.append(LSTMCell(input_dim, hidden_dim, layernorm))
+            self.model_rev = [LSTMCell(input_dim, hidden_dim, layernorm)]
+            for i in range(1, self.layers):
+                self.model_rev.append(LSTMCell(hidden_dim, hidden_dim, layernorm))
             self.model_rev = nn.ModuleList(self.model_rev)
 
     def forward(self, x, hidden_state, cell_state):
@@ -250,10 +250,10 @@ class LSTM(nn.Module):
         cell_states = cell_state[:self.layers,:,:].view(self.layers, 1,
                                                         cell_state.shape[1],
                                                         cell_state.shape[2])
-        output = torch.tensor([], requires_grad=True).to(device)
+        output = x.clone()
         # forward pass for one cell at a time along layers
         for j in range(self.layers):
-            output, (hidden_states[j], cell_states[j]) = self.model[j](x, hidden_states[j].clone(),
+            output, (hidden_states[j], cell_states[j]) = self.model[j](output, hidden_states[j].clone(),
                                                                   cell_states[j].clone())
         hidden_states = hidden_states.squeeze(1)
         cell_states = cell_states.squeeze(1)
@@ -274,10 +274,10 @@ class LSTM(nn.Module):
             cell_states_rev = cell_state[self.layers:,:,:].view(self.layers, 1,
                                                              cell_state.shape[1],
                                                              cell_state.shape[2])
-            output_rev = torch.tensor([], requires_grad=True).to(device)
+            output_rev = x.clone()
             # forward pass for one cell at a time along layers
             for j in range(self.layers):
-                output_rev, (hidden_states_rev[j], cell_states_rev[j]) = self.model_rev[j](x,
+                output_rev, (hidden_states_rev[j], cell_states_rev[j]) = self.model_rev[j](output_rev,
                                                                         hidden_states_rev[j].clone(),
                                                                         cell_states_rev[j].clone())
             # flipping outputs to be in correct timestep order
@@ -295,7 +295,6 @@ class LSTM(nn.Module):
                                 output_rev), dim=2)
 
         return output, (hidden_states, cell_states)
-
 
 # Below class was the inital bare-bones implementation
 #
