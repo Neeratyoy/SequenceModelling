@@ -8,16 +8,19 @@ import random
 from matplotlib import pyplot as plt
 
 from lstm import LSTM
+from transformer import PositionalEncoding, Encoder, Decoder, get_subsequent_mask
 
 from sklearn.metrics import confusion_matrix, f1_score, classification_report
 
 
+## ----------------------------------------------------------------------------
+## LSTM MODELS
+## ----------------------------------------------------------------------------
+
 class LSTMSeq2SeqDifferent(nn.Module):
     """ LSTM Class for Sequence Labelling (many-to-many-different)
-
     The class creates the LSTM architecture as specified by the parameters.
     A fully connected layer is added to reduce the last hidden state to output_dim.
-
     Parameters
     ==========
     vocab_len: int from imdb dataset
@@ -28,7 +31,6 @@ class LSTMSeq2SeqDifferent(nn.Module):
     layers: number of LSTM cells to be stacked for depth
     bidirectional: boolean
     layernorm: boolean
-
     """
     def __init__(self, input_dim, hidden_dim, output_dim, layers=1,
                  bidirectional=False, layernorm=False):
@@ -98,10 +100,8 @@ class LSTMSeq2SeqDifferent(nn.Module):
 
 class PyTorchBaseline(nn.Module):
     """ LSTM Class for Sequence Labelling (many-to-many-different)
-
     The class creates the LSTM architecture as specified by the parameters.
     A fully connected layer is added to reduce the last hidden state to output_dim.
-
     Parameters
     ==========
     vocab_len: int from imdb dataset
@@ -112,7 +112,6 @@ class PyTorchBaseline(nn.Module):
     layers: number of LSTM cells to be stacked for depth
     bidirectional: boolean
     layernorm: boolean
-
     """
     def __init__(self, input_dim, hidden_dim, output_dim, layers=1,
                  bidirectional=False, layernorm=False):
@@ -180,7 +179,113 @@ class PyTorchBaseline(nn.Module):
         return tot_sum
 
 
-def create_ncopy_task(sequence_length, n_copy, batch_size, train_test_ratio, train_valid_ratio=None):
+## ----------------------------------------------------------------------------
+## TRANSFORMER MODELS
+## ----------------------------------------------------------------------------
+
+class TransformerSeq2SeqDifferent(nn.Module):
+    
+    def __init__(self, in_dim, out_dim, N, heads, model_dim, key_dim, value_dim, ff_dim, 
+                 max_len=10000, batch_first=True):
+        
+        super().__init__()
+        self.name = 'transformer'
+        
+        self.batch_first = batch_first
+        self.model_dim = model_dim
+        
+        # define layers
+        # embedding layers
+        self.src_embed = nn.Linear(in_dim, model_dim)
+        self.tgt_embed = nn.Linear(in_dim, model_dim)
+        self.pos_enc = PositionalEncoding(model_dim, max_len)
+        # encoder-decoder
+        self.encoder = Encoder(N, heads, model_dim, key_dim, value_dim, ff_dim)
+        self.decoder = Decoder(N, heads, model_dim, key_dim, value_dim, ff_dim)
+        # final output layer
+        self.fc = nn.Linear(model_dim, out_dim)
+    
+        # xavier initialization
+        for p in self.parameters():
+            if p.dim() > 1 and p.requires_grad:
+                nn.init.xavier_uniform_(p)
+    
+    def forward(self, src, tgt, src_mask=None, tgt_mask=None):
+
+        # transpose to use [batch, seq_len, dim]
+        if not self.batch_first:
+            src = src.transpose(0, 1)
+            tgt = tgt.transpose(0, 1)
+        
+        # get subsequent mask for target sequence
+        tgt_subseq_mask = get_subsequent_mask(tgt)
+        # combine with tgt mask if provided
+        if tgt_mask is not None:
+            tgt_subseq_mask = (tgt_mask + tgt_subseq_mask).gt(0)
+        
+        ## get encoder attention from source
+        src = self.src_embed(src)
+        src = self.pos_enc(src)
+        src_attn = self.encoder(src, src_mask)
+        
+        ## get decoder attention from target & source attention
+        tgt = self.tgt_embed(tgt)
+        tgt = self.pos_enc(tgt)
+        x = self.decoder(src_attn, tgt, src_mask, tgt_subseq_mask)
+        
+        x = self.fc(x)
+        # transpose to use [batch, seq_len, dim]
+        if not self.batch_first:
+            x = x.transpose(0, 1)
+        return x
+        
+    def save(self, file_path='./model.pkl'):
+        torch.save(self.state_dict(), file_path)
+
+    def load(self, file_path):
+        self.load_state_dict(torch.load(file_path))
+
+    def count_parameters(self):
+        tot_sum = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return tot_sum
+
+    def generate(self, src, start_token, src_mask=None, max_len=1):
+        
+        # transpose to use [batch, seq_len, dim]
+        if not self.batch_first:
+            src = src.transpose(0, 1)
+        
+        ## get encoder attention from source
+        src = self.src_embed(src)
+        src = self.pos_enc(src)
+        src_attn = self.encoder(src, src_mask)
+        
+        # initialize target with start symbol - 1 x b x dim
+        tgt = torch.tensor(start_token).view(1,1,-1).repeat(src.shape[0],1,1).float()
+        
+        for i in range(max_len-1):
+            # generate subsequent mask for target sequence
+            tgt_subseq_mask = get_subsequent_mask(tgt)
+            ## get decoder attention from target & source attention
+            tgt_embed = self.tgt_embed(tgt)
+            tgt_embed = self.pos_enc(tgt_embed)
+            x = self.decoder(src_attn, tgt_embed, src_mask, tgt_subseq_mask)
+            # get last predictions and combine with target for next iteration
+            x = self.fc(x[:,-1:])
+            x = torch.zeros_like(x).scatter_(2, torch.argmax(x, -1, keepdim=True), 1)            
+            tgt = torch.cat((tgt, x), dim=1)
+            
+        # transpose to use [batch, seq_len, dim]
+        if not self.batch_first:
+            tgt = tgt.transpose(0, 1)
+        return tgt
+
+
+## ----------------------------------------------------------------------------
+## TASK SPECIFIC METHODS
+## ----------------------------------------------------------------------------
+
+def create_ncopy_task(sequence_length, n_copy, batch_size, start_token, train_test_ratio, train_valid_ratio=None):
     # Generating data
     state_size = sequence_length  # sequence length
     # sequence_length = state_size
@@ -207,6 +312,10 @@ def create_ncopy_task(sequence_length, n_copy, batch_size, train_test_ratio, tra
     data_y = np.transpose(data_y).reshape(n_copy * sequence_length, data_size, 1)
     data_y = torch.from_numpy(data_y).float()
     data_y = torch.zeros(data_y.shape[0], data_y.shape[1], 2).scatter_(2, data_y.long(), 1)
+
+    # adding start token
+    data_x = torch.nn.functional.pad(data_x, (0,0,0,0,1,0), 'constant', start_token)
+    data_y = torch.nn.functional.pad(data_y, (0,0,0,0,1,0), 'constant', start_token)
 
     # Creating training and test sets
     train_size = train_test_ratio
@@ -272,16 +381,23 @@ class Seq2SeqDifferent():
     optimizer: an initialized nn.optim functional
     loss_fn: an initialized nn loss functional
     device: A torch device object {"cpu", "cuda"}
-
     """
 
-    def __init__(self, model, optimizer, loss_fn, device=None):
+    def __init__(self, model, optimizer, loss_fn, start_token=1, teacher_forcing=0.5, device=None):
         self.model = model
         self.optimizer = optimizer
         self.loss_criterion = loss_fn
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.device = device
+        self.start_token = start_token
+        self.teacher_forcing = teacher_forcing
+        
+        # get forward call for model
+        if self.model.name == 'transformer':
+            self.forward = self.transformer_forward
+        else:
+            self.forward = self.lstm_forward
 
     def plot_history(self, train, valid=[], epochs=None, file_path='./plot.png', stats='loss'):
         if epochs is None:
@@ -315,8 +431,37 @@ class Seq2SeqDifferent():
         with open(file_path, 'r') as f:
             self.stats = json.load(f)
         return self.stats
+    
+    def lstm_forward(self, x, y, eval=False):
+        ''' forward call for LSTM network '''
+        if self.model.bidirectional:
+            # shape -> layers x batch x hidden_dim
+            hidden_state = torch.zeros(2 * self.model.layers, x.shape[1],
+                                       self.model.hidden_dim).to(self.device)
+            cell_state = torch.zeros(2 * self.model.layers, x.shape[1],
+                                     self.model.hidden_dim).to(self.device)
+        else:
+            hidden_state = torch.zeros(self.model.layers, x.shape[1],
+                                       self.model.hidden_dim).to(self.device)
+            cell_state = torch.zeros(self.model.layers, x.shape[1],
+                                     self.model.hidden_dim).to(self.device)
+        teacher_forcing = 0 if eval else self.teacher_forcing
+        
+        # forward pass
+        o = self.model(x, y, hidden_state, cell_state, teacher_forcing)
+        # return the predicted responses, without the start token if training
+        o = o[1:] if not eval else o
+        return o
+    
+    def transformer_forward(self, x, y, eval=False):
+        ''' forward call for transformer network '''
+        if eval:
+            o = self.model.generate(x, start_token=self.start_token, max_len=y.shape[0])
+        else:
+            o = self.model(x, y[:-1])
+        return o
 
-    def train(self, epochs, train_loader, valid_loader=None, teacher_forcing=5, freq=10,
+    def train(self, epochs, train_loader, valid_loader=None, freq=10,
               out_dir='./', create_dir=True):
         """ Function to train the model and save statistics
 
@@ -359,23 +504,14 @@ class Seq2SeqDifferent():
                 train_y = train_y.to(self.device)
                 batch = train_y.shape[1]
                 start = time.time()
-                if self.model.bidirectional:
-                    hidden_state = torch.zeros(2 * self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(2 * self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-                else:
-                    hidden_state = torch.zeros(self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-                # forward pass
-                o = self.model(train_x, train_y, hidden_state, cell_state, teacher_forcing)
-
+                
+                o = self.forward(train_x, train_y)
+                
                 # backward pass for the batch (+ weight updates)
                 self.optimizer.zero_grad()
-                gt = torch.argmax(train_y, 2, keepdim=True).view(-1)
-                loss = self.loss_criterion(o.view(-1, 2), gt)
+                # ignoring start token for ground truth
+                gt = torch.argmax(train_y[1:], 2, keepdim=True).contiguous().view(-1)
+                loss = self.loss_criterion(o.contiguous().view(-1, 2), gt)
                 loss.backward()
                 self.optimizer.step()
 
@@ -431,31 +567,24 @@ class Seq2SeqDifferent():
         losses = []
 
         with torch.no_grad():
-            for x, y in test_loader:
+            for i, (x, y) in enumerate(test_loader):
                 x = x.to(self.device)
                 y = y.to(self.device)
                 batch = y.shape[1]
-                if self.model.bidirectional:
-                    hidden_state = torch.zeros(2 * self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(2 * self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-                else:
-                    hidden_state = torch.zeros(self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-
-                o = self.model(x, y, hidden_state, cell_state, teacher_forcing=0)
-                #o = model.softmax(o)
+                
+                print('.', end='')
+                
+                o = self.forward(x, y, eval=True)
                 gt = torch.argmax(y, 2, keepdim=True).view(-1)
-                loss = self.loss_criterion(o.view(-1, 2), gt)
+                loss = self.loss_criterion(o.contiguous().view(-1, 2), gt)
 
                 pred = torch.argmax(o, 2, keepdim=True).view(-1).cpu().detach().numpy()
                 preds.extend(pred)
                 label = torch.argmax(y, 2, keepdim=True).view(-1).cpu().detach().numpy()
                 labels.extend(label)
                 losses.append(loss.item())
+                
+        print()
         loss = np.mean(losses)
         if verbose:
             print('Confusion Matrix: \n', confusion_matrix(labels, preds))

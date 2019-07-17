@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, f1_score
 
 from lstm import LSTM
-from transformer import PositionalEncoding, Encoder, init_weights
+from transformer import PositionalEncoding, Encoder, get_pad_mask_n_dim
 
 
 ## ----------------------------------------------------------------------------
@@ -143,6 +143,7 @@ class TransformerSeq2SeqSame(nn.Module):
     ==========
     in_dim: input vocab size from bAbi dataset
     out_dim: output dimensions of the model
+    N: number of encoder & decoder layers
     model_dim: embedding dimension, also the dimensionality at which the transformer operates
     key_dim: dimensions for query & key in attention calculation
     value_dim: dimensions for value in attention calculation
@@ -150,12 +151,13 @@ class TransformerSeq2SeqSame(nn.Module):
     max_len: max length to generate positional encodings (default=10000)
     batch_first: if batch is the 1st input dimension [seq_len, batch, dim] (default=False)
     """
-    def __init__(self, in_dim, out_dim, N, heads, model_dim, key_dim, value_dim, ff_dim, max_len=10000, batch_first=False):
+    def __init__(self, in_dim, out_dim, N, heads, model_dim, key_dim, value_dim, ff_dim, max_len=10000, batch_first=True):
         
         super().__init__()
         self.name = 'transformer'
         
         self.batch_first = batch_first
+        self.model_dim = model_dim
         
         # define layers
         self.embed = nn.Linear(in_dim, model_dim)
@@ -166,8 +168,8 @@ class TransformerSeq2SeqSame(nn.Module):
 
         # xavier initialization
         for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform(p)
+            if p.dim() > 1 and p.requires_grad:
+                nn.init.xavier_uniform_(p)
     
     def forward(self, x, mask=None):
         # transpose to use [batch, seq_len, dim]
@@ -221,6 +223,12 @@ class Seq2SeqSame():
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.device = device
+        
+        # get forward call for model
+        if self.model.name == 'transformer':
+            self.forward = self.transformer_forward
+        else:
+            self.forward = self.lstm_forward
 
     def plot_history(self, train, valid=[], epochs=None, file_path='./plot.png', stats='loss'):
         if epochs is None:
@@ -254,6 +262,28 @@ class Seq2SeqSame():
         with open(file_path, 'r') as f:
             self.stats = json.load(f)
         return self.stats
+      
+    def lstm_forward(self, x):
+        ''' calls forward pass for LSTM '''
+        if self.model.bidirectional:
+            hidden_state = torch.zeros(2 * self.model.layers, x.shape[1],
+                                       self.model.hidden_dim).to(self.device)
+            cell_state = torch.zeros(2 * self.model.layers, x.shape[1],
+                                     self.model.hidden_dim).to(self.device)
+        else:
+            hidden_state = torch.zeros(self.model.layers, x.shape[1],
+                                       self.model.hidden_dim).to(self.device)
+            cell_state = torch.zeros(self.model.layers, x.shape[1],
+                                     self.model.hidden_dim).to(self.device)
+        # forward pass
+        output = self.model(x, hidden_state, cell_state)
+        return output
+      
+    def transformer_forward(self, x):
+        ''' calls forward pass for Transformer '''
+        mask = get_pad_mask_n_dim(x.transpose(0,1), x.transpose(0,1), pad_pos=0)
+        output = self.model(x, mask)
+        return output
 
     def train(self, epochs, train_loader, valid_loader=None, freq=10, out_dir='./',
               vocab=None, wer_dict=None, create_dir=True):
@@ -280,12 +310,13 @@ class Seq2SeqSame():
         self.stats = {'loss': [], 'train_score': [], 'valid_score': [], 'epoch': [],
                       'train_loss': [], 'valid_loss': [], 'wallclock': []}
         self.freq = freq
-        start_training = time.time()
-
+        
         # create output directory if it does not exist
         if create_dir:
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
+        
+        start_training = time.time()
 
         for i in range(1, epochs + 1):
             loss_tracker = []
@@ -295,23 +326,13 @@ class Seq2SeqSame():
                 # generate initial hidden & cell states
                 batch = label.shape[0]
                 start = time.time()
-                if self.model.bidirectional:
-                    hidden_state = torch.zeros(2 * self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(2 * self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-                else:
-                    hidden_state = torch.zeros(self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-
                 # input to have (seq_len, batch, input_dim)
                 text = text.transpose(0, 1).to(self.device)
                 label = label.transpose(0, 1).to(self.device)
 
                 # forward pass
-                output = self.model(text, hidden_state, cell_state)
+                output = self.forward(text)
+                
                 # reshape to have (N, classes)
                 output = output.contiguous().view(-1, output.shape[-1])
                 label = label.contiguous().view(-1)
@@ -366,7 +387,6 @@ class Seq2SeqSame():
             Expects a torchtext BucketIterator
         freq: The number of epoch intervals to validate and save models
         out_dir: Directory where models and plots are to be saved
-
         """
         self.model.eval()
 
@@ -377,22 +397,12 @@ class Seq2SeqSame():
         with torch.no_grad():
             for text, label in test_loader:
                 batch = label.shape[0]
-                if self.model.bidirectional:
-                    hidden_state = torch.zeros(2 * self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(2 * self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-                else:
-                    hidden_state = torch.zeros(self.model.layers, batch,
-                                               self.model.hidden_dim).to(self.device)
-                    cell_state = torch.zeros(self.model.layers, batch,
-                                             self.model.hidden_dim).to(self.device)
-
                 # input to have (seq_len, batch, input_dim)
                 text = text.transpose(0, 1).to(self.device)
                 label = label.transpose(0, 1).to(self.device)
 
-                output = self.model(text, hidden_state, cell_state)
+                output = self.forward(text)
+                
                 # reshape to have (N, classes)
                 output = output.contiguous().view(-1, output.shape[-1])
                 label = label.contiguous().view(-1)

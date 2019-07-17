@@ -143,6 +143,7 @@ class TransformerSeqLabel(nn.Module):
     ==========
     in_dim: input vocab size from imdb dataset
     out_dim: output dimensions of the model
+    N: number of encoder & decoder layers
     model_dim: embedding dimension, also the dimensionality at which the transformer operates
     key_dim: dimensions for query & key in attention calculation
     value_dim: dimensions for value in attention calculation
@@ -152,12 +153,13 @@ class TransformerSeqLabel(nn.Module):
     pretrained_vec: weights from embedding model (GloVe)
     """
     def __init__(self, in_dim, out_dim, N, heads, model_dim, key_dim, value_dim, ff_dim,
-                 max_len=10000, batch_first=False, pretrained_vec=None):
+                 dropout=0.1, max_len=10000, batch_first=True, pretrained_vec=None):
         
         super().__init__()
         self.name = 'transformer'
         
         self.batch_first = batch_first
+        self.model_dim = model_dim
         
         # define layers
         self.embedding = nn.Embedding(in_dim, model_dim)
@@ -166,14 +168,14 @@ class TransformerSeqLabel(nn.Module):
             self.embedding = self.embedding.from_pretrained(
             pretrained_vec, freeze=True)
         self.pos_enc = PositionalEncoding(model_dim, max_len)
-        self.encoder = Encoder(N, heads, model_dim, key_dim, value_dim, ff_dim)
+        self.encoder = Encoder(N, heads, model_dim, key_dim, value_dim, ff_dim, dropout=dropout)
         # final output layer
         self.fc = nn.Linear(model_dim, out_dim)
     
         # xavier initialization
         for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform(p)
+            if p.dim() > 1 and p.requires_grad:
+                nn.init.xavier_uniform_(p)
 
     def forward(self, x, mask=None):
         # transpose to use [batch, seq_len, dim]
@@ -285,13 +287,14 @@ class SeqLabel():
     def transformer_forward(self, x):
         ''' calls forward pass for Transformer'''
         # generating padding mask
+        # mask = None
         mask = get_pad_mask(x.transpose(0,1), x.transpose(0,1), pad=1)
         output = self.model(x, mask)
         # mean over all attention output (seq_len) for a given sequence
-        output = output.mean(dim=0) 
+        output = output.mean(dim=0)
         return output
 
-    def train(self, epochs, train_loader, valid_loader=None, freq=10, out_dir='./'):
+    def train(self, epochs, train_loader, valid_loader=None, freq=10, out_dir='./', create_dir=True):
         """ Function to train the model and save statistics
 
         Parameters
@@ -316,8 +319,9 @@ class SeqLabel():
         self.freq = freq
         
         # create output directory if it does not exist
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
+        if create_dir:
+            if not os.path.exists(out_dir):
+                os.makedirs(out_dir)
         
         start_training = time.time()
         for i in range(1, epochs+1):

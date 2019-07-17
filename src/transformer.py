@@ -30,7 +30,7 @@ class ScaledDotProductAttention(nn.Module):
         # mask score if provided
         if mask is not None:
             mask = mask.unsqueeze(1)  # for the 'head' dim
-            score = score.masked_fill(mask == 0, -np.inf)
+            score = score.masked_fill(mask, -np.inf)
         
         score = torch.softmax(score, dim=-1)    
         score = self.dropout(score)
@@ -44,7 +44,7 @@ class ScaledDotProductAttention(nn.Module):
 
 class MultiHeadAttention(nn.Module):
     
-    def __init__(self, heads, model_dim, key_dim, value_dim):
+    def __init__(self, heads, model_dim, key_dim, value_dim, dropout=0.1):
         '''
         Multi-head attention for the transformer
         
@@ -73,6 +73,7 @@ class MultiHeadAttention(nn.Module):
         # final fc layer combining all attention heads
         self.Wout = nn.Linear(self.heads*self.d_v, self.d_model)
         
+        self.dropout = nn.Dropout(dropout)
         # layer norm for residual connection
         self.norm = nn.LayerNorm(self.d_model, eps=1e-6)
 
@@ -99,18 +100,19 @@ class MultiHeadAttention(nn.Module):
         
         # linear operation on inputs - output shape: [batch, seq_len, heads*dim]
         # reshape to [batch, heads, seq_len, dim] for computation efficiency
-        q = self.Wq(q).view(batch, self.heads, -1, self.d_k)
-        k = self.Wk(k).view(batch, self.heads, -1, self.d_k)
-        v = self.Wv(v).view(batch, self.heads, -1, self.d_v)
+        q = self.Wq(q).view(batch, -1, self.heads, self.d_k).transpose(1, 2)
+        k = self.Wk(k).view(batch, -1, self.heads, self.d_k).transpose(1, 2)
+        v = self.Wv(v).view(batch, -1, self.heads, self.d_v).transpose(1, 2)
         
         # calling self attention - output shape: [batch, heads, seq_len, d_v]
         attn = self.attn(q, k, v, mask)
         # reshape into [batch, seq_len, heads*d_v]
         attn = attn.transpose(1,2).contiguous().view(batch, -1, self.heads*self.d_v)
-                
+        
         # combine multihead attention into one
-        attn = self.Wout(attn)    
+        attn = self.Wout(attn)
         # add and normalize
+        attn = self.dropout(attn)
         attn = self.norm(residual + attn)
         
         return attn
@@ -118,7 +120,7 @@ class MultiHeadAttention(nn.Module):
 
 class PositionWiseFeedForward(nn.Module):
     
-    def __init__(self, model_dim, ff_dim):
+    def __init__(self, model_dim, ff_dim, dropout=0.1):
         ''' 
         Position wise feed forward network, through which all individual elements are passed 
         
@@ -132,6 +134,7 @@ class PositionWiseFeedForward(nn.Module):
         self.w1 = nn.Linear(model_dim, ff_dim)
         self.w2 = nn.Linear(ff_dim, model_dim)
         
+        self.dropout = nn.Dropout(dropout)
         # layer norm for residual connection
         self.norm = nn.LayerNorm(model_dim, eps=1e-6)
         
@@ -141,7 +144,9 @@ class PositionWiseFeedForward(nn.Module):
         Input and output shape - [batch, seq_len, d_model]
         '''
         out = torch.relu(self.w1(x))    
-        out = self.w2(out)
+        out = torch.relu(self.w2(out))
+
+        out = self.dropout(out)
         # add and normalize
         out = self.norm(out + x)
         return out
@@ -153,7 +158,7 @@ class PositionWiseFeedForward(nn.Module):
 
 class EncoderCell(nn.Module):
     
-    def __init__(self, heads, model_dim, key_dim, value_dim, ff_dim):
+    def __init__(self, heads, model_dim, key_dim, value_dim, ff_dim, dropout=0.1):
         '''
         One layer of a transformer encoder with multi-head attention and position wise feed forward
         
@@ -167,8 +172,8 @@ class EncoderCell(nn.Module):
         '''
         super().__init__()
         
-        self.self_attn = MultiHeadAttention(heads, model_dim, key_dim, value_dim)
-        self.pos_ff = PositionWiseFeedForward(model_dim, ff_dim)
+        self.self_attn = MultiHeadAttention(heads, model_dim, key_dim, value_dim, dropout)
+        self.pos_ff = PositionWiseFeedForward(model_dim, ff_dim, dropout)
         
     def forward(self, x, mask):
         '''
@@ -189,7 +194,7 @@ class EncoderCell(nn.Module):
 
 class DecoderCell(nn.Module):
     
-    def __init__(self, heads, model_dim, key_dim, value_dim, ff_dim):
+    def __init__(self, heads, model_dim, key_dim, value_dim, ff_dim, dropout=0.1):
         '''
         One layer of a transformer decoder with multi-head attention and position wise feed forward
         
@@ -203,18 +208,18 @@ class DecoderCell(nn.Module):
         '''
         super().__init__()
         
-        self.self_attn = MultiHeadAttention(heads, model_dim, key_dim, value_dim)
-        self.src_attn = MultiHeadAttention(heads, model_dim, key_dim, value_dim)
-        self.pos_ff = PositionWiseFeedForward(model_dim, ff_dim)
+        self.self_attn = MultiHeadAttention(heads, model_dim, key_dim, value_dim, dropout)
+        self.src_attn = MultiHeadAttention(heads, model_dim, key_dim, value_dim, dropout)
+        self.pos_ff = PositionWiseFeedForward(model_dim, ff_dim, dropout)
         
-    def forward(self, src, src_mask, tgt, tgt_mask):
+    def forward(self, src, tgt, src_mask, tgt_mask):
         '''
         Parameters:
         -----------
-        tgt: positionally encoded output tensor
-        tgt_mask: masking tensor for input with same shape
         src: tensor from the last encoder layer
+        tgt: positionally encoded output tensor
         src_mask: masking tensor for encoded output with same shape
+        tgt_mask: masking tensor for input with same shape
         
         Input and output shape - [seq_len, batch, d_model]
         '''    
@@ -229,7 +234,7 @@ class DecoderCell(nn.Module):
 
 class Encoder(nn.Module):
     
-    def __init__(self, N, heads, model_dim, key_dim, value_dim, ff_dim):
+    def __init__(self, N, heads, model_dim, key_dim, value_dim, ff_dim, dropout=0.1):
         '''
         Encoder module of a transformer with N encoder layers
         
@@ -245,7 +250,7 @@ class Encoder(nn.Module):
         super().__init__()
         
         self.enc_stack = nn.ModuleList([
-                EncoderCell(heads, model_dim, key_dim, value_dim, ff_dim)
+                EncoderCell(heads, model_dim, key_dim, value_dim, ff_dim, dropout)
                 for _ in range(N)])
         
         # self.norm = nn.LayerNorm(model_dim, eps=1e-6)
@@ -268,7 +273,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
     
-    def __init__(self, N, heads, model_dim, key_dim, value_dim, ff_dim):
+    def __init__(self, N, heads, model_dim, key_dim, value_dim, ff_dim, dropout=0.1):
         '''
         Decoder module of a transformer with N decoder layers
         
@@ -284,12 +289,12 @@ class Decoder(nn.Module):
         super().__init__()
         
         self.dec_stack = nn.ModuleList([
-                DecoderCell(heads, model_dim, key_dim, value_dim, ff_dim)
+                DecoderCell(heads, model_dim, key_dim, value_dim, ff_dim, dropout)
                 for _ in range(N)])
         
         # self.norm = nn.LayerNorm(model_dim, eps=1e-6)
         
-    def forward(self, src, src_mask, tgt, tgt_mask):
+    def forward(self, src, tgt, src_mask, tgt_mask):
         '''
         Parameters:
         -----------
@@ -300,7 +305,7 @@ class Decoder(nn.Module):
         '''
         # get attention
         for dec in self.dec_stack:
-            tgt = dec(src, src_mask, tgt, tgt_mask)
+            tgt = dec(src, tgt, src_mask, tgt_mask)
         # tgt = self.norm(tgt)
         return tgt
 
@@ -346,15 +351,16 @@ class PositionalEncoding(nn.Module):
 
 
 ## Masks method for decoder
-def gen_subsequent_mask(dim):
+def get_subsequent_mask(seq):
     '''
     Generates mask with all positions after current position being masked out
     Returns:
     --------
-        a mask of shape [dim, dim] with True in upper triangular matrix
+    a mask of shape [dim, dim] with True in upper triangular matrix
     '''
-    mask = torch.ones(1, dim, dim)
-    mask = torch.triu(mask, 1).neg() + 1
+    dim = seq.shape[1]
+    mask = torch.ones(1, dim, dim, dtype=torch.uint8, device=seq.device)
+    mask = torch.triu(mask, 1)
     return mask
 
 ## Mask for padding
@@ -362,8 +368,59 @@ def get_pad_mask(seq_k, seq_q, pad=0):
     ''' For masking out the padding part of key sequence. '''
 
     # Expand to fit the shape of key query attention matrix.
-    len_q = seq_q.size(1)
+    # len_q = seq_q.size(1)
     padding_mask = seq_k.eq(pad)
-    padding_mask = padding_mask.unsqueeze(1).expand(-1, len_q, -1)  # b x lq x lk
+    # padding_mask = padding_mask.unsqueeze(1).expand(-1, len_q, -1)  # b x lq x lk
+    padding_mask = padding_mask.unsqueeze(1)  # b x 1 x lk (for any lq)
 
     return padding_mask
+
+
+## Mask for padding, if sequence is 3D (padding is a sequence)
+def get_pad_mask_n_dim(seq_k, seq_q, pad_pos=0):
+    ''' For masking out the padding part of key sequence. '''
+
+    assert seq_k.dim() == 3 and seq_q.dim() == 3
+    
+    # generate padding vector for position
+    pad = torch.zeros(seq_k.shape[2]).to(seq_k.device)
+    if pad_pos >= 0:
+        pad[pad_pos] = 1
+
+    # Expand to fit the shape of key query attention matrix.
+    # len_q = seq_q.size(1)
+    padding_mask = torch.all(seq_k.eq(pad), dim=-1)  # b x lq
+    padding_mask = padding_mask.unsqueeze(1)#.expand(-1, len_q, -1)  # b x lq x lk
+    return padding_mask
+
+
+## Transformer optimizer
+class NoamOpt:
+    "Optim wrapper that implements rate."
+    def __init__(self, model_size, factor, warmup, optimizer):
+        self.optimizer = optimizer
+        self._step = 0
+        self.warmup = warmup
+        self.factor = factor
+        self.model_size = model_size
+        self._rate = 0
+        
+    def step(self):
+        "Update parameters and rate"
+        self._step += 1
+        rate = self.rate()
+        for p in self.optimizer.param_groups:
+            p['lr'] = rate
+        self._rate = rate
+        self.optimizer.step()
+        
+    def rate(self, step = None):
+        "Implement `lrate` above"
+        if step is None:
+            step = self._step
+        return self.factor * \
+            (self.model_size ** (-0.5) *
+            min(step ** (-0.5), step * self.warmup ** (-1.5)))
+
+    def zero_grad(self):
+        self.optimizer.zero_grad()
