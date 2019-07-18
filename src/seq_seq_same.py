@@ -234,8 +234,9 @@ class Seq2SeqSame():
         if epochs is None:
             epochs = np.arange(1, len(train) + 1)
         plt.clf()
-        plt.plot(epochs, train, label="Training")
-        if valid:  # valid is empty
+        if train:  # train is not empty
+            plt.plot(epochs, train, label="Training")
+        if valid:  # valid is not empty
             plt.plot(epochs, valid, label="Validation")
         plt.title("{} comparison".format(stats))
         plt.xlabel("epochs")
@@ -286,7 +287,7 @@ class Seq2SeqSame():
         return output
 
     def train(self, epochs, train_loader, valid_loader=None, freq=10, out_dir='./',
-              vocab=None, wer_dict=None, create_dir=True):
+              vocab=None, wer_dict=None, create_dir=True, train_eval=True):
         """ Function to train the model and save statistics
 
         Parameters
@@ -343,23 +344,23 @@ class Seq2SeqSame():
                 self.optimizer.step()
 
                 # print(".", end='')  # for colab (comment below print)
-                print("Epoch #{}: Batch {}/{} -- Loss = {}; "
-                      "Time taken: {}s".format(i, j, len(train_loader),
-                                               loss.item(), time.time() - start), end='\r')
+                # print("Epoch #{}: Batch {}/{} -- Loss = {}; "
+                #       "Time taken: {}s".format(i, j, len(train_loader),
+                #                                loss.item(), time.time() - start), end='\r')
                 loss_tracker.append(loss.item())
 
             self.stats['loss'].append(np.mean(loss_tracker))
             print()
             print("Epoch #{}: Average loss is {}".format(i, self.stats['loss'][-1]))
             if i % freq == 0 or i == 1:
-                accuracy, train_loss = self.evaluate(train_loader, vocab,
-                                                     wer_dict, verbose=False)
-                self.stats['train_score'].append(accuracy)
-                self.stats['train_loss'].append(train_loss)
                 self.stats['epoch'].append(i)
                 self.stats['wallclock'].append(time.time() - start_training)
-                print("Epoch #{}: Train WER is {}".format(i, self.stats['train_score'][-1]))
-
+                if train_eval:
+                    accuracy, train_loss = self.evaluate(train_loader, vocab,
+                                                         wer_dict, verbose=False)
+                    self.stats['train_score'].append(accuracy)
+                    self.stats['train_loss'].append(train_loss)
+                    print("Epoch #{}: Train WER is {}".format(i, self.stats['train_score'][-1]))
                 if valid_loader is not None:
                     accuracy, val_loss = self.evaluate(valid_loader, vocab,
                                                        wer_dict, verbose=False)

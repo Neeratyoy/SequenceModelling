@@ -132,6 +132,8 @@ class PyTorchBaseline(nn.Module):
 ## TRANSFORMER MODELS
 ## ----------------------------------------------------------------------------
 
+from transformer import PositionalEncoding, Encoder, get_pad_mask
+
 class TransformerSeqLabel(nn.Module):
     """ Transformer Class for Sequence Labelling (many-to-one)
 
@@ -152,7 +154,7 @@ class TransformerSeqLabel(nn.Module):
     batch_first: if batch is the 1st input dimension [seq_len, batch, dim] (default=False)
     pretrained_vec: weights from embedding model (GloVe)
     """
-    def __init__(self, in_dim, out_dim, N, heads, model_dim, key_dim, value_dim, ff_dim,
+    def __init__(self, in_dim, out_dim, N, heads, embed_dim, model_dim, key_dim, value_dim, ff_dim,
                  dropout=0.1, max_len=10000, batch_first=True, pretrained_vec=None):
         
         super().__init__()
@@ -160,13 +162,16 @@ class TransformerSeqLabel(nn.Module):
         
         self.batch_first = batch_first
         self.model_dim = model_dim
+        self.embed_dim = embed_dim
         
         # define layers
-        self.embedding = nn.Embedding(in_dim, model_dim)
+        self.embedding = nn.Embedding(in_dim, embed_dim)
         # not training embedding layer if pretrained embedding is provided
         if pretrained_vec is not None:
             self.embedding = self.embedding.from_pretrained(
             pretrained_vec, freeze=True)
+        if embed_dim != model_dim:
+            self.fc_in = nn.Linear(embed_dim, model_dim)
         self.pos_enc = PositionalEncoding(model_dim, max_len)
         self.encoder = Encoder(N, heads, model_dim, key_dim, value_dim, ff_dim, dropout=dropout)
         # final output layer
@@ -183,6 +188,8 @@ class TransformerSeqLabel(nn.Module):
             x = x.transpose(0, 1)
             
         x = self.embedding(x)
+        if self.embed_dim != self.model_dim:
+            x = self.fc_in(x)
         x = self.pos_enc(x)
         x = self.encoder(x, mask)
         x = self.fc(x)
@@ -239,8 +246,9 @@ class SeqLabel():
         if epochs is None:
             epochs = np.arange(1, len(train)+1)
         plt.clf()
-        plt.plot(epochs, train, label="Training")
-        if valid: # valid is empty
+        if train:  # train is not empty
+            plt.plot(epochs, train, label="Training")
+        if valid: # valid is not empty
             plt.plot(epochs, valid, label="Validation")
         plt.title("{} comparison".format(stats))
         plt.xlabel("epochs")
@@ -294,7 +302,7 @@ class SeqLabel():
         output = output.mean(dim=0)
         return output
 
-    def train(self, epochs, train_loader, valid_loader=None, freq=10, out_dir='./', create_dir=True):
+    def train(self, epochs, train_loader, valid_loader=None, freq=10, out_dir='./', create_dir=True, train_eval=True):
         """ Function to train the model and save statistics
 
         Parameters
@@ -341,9 +349,9 @@ class SeqLabel():
                 self.optimizer.step()
 
                 # print(".", end='') # for colab (comment below print)
-                print("Epoch #{}: Batch {}/{} -- Loss = {}; "
-                      "Time taken: {}s".format(i, j, len(train_loader),
-                                               loss.item(), time.time() - start), end='\r')
+                # print("Epoch #{}: Batch {}/{} -- Loss = {}; "
+                #       "Time taken: {}s".format(i, j, len(train_loader),
+                #                                loss.item(), time.time() - start), end='\r')
                 loss_tracker.append(loss.item())
 
             self.stats['loss'].append(np.mean(loss_tracker))
@@ -351,19 +359,20 @@ class SeqLabel():
             print()
             print("Epoch #{}: Average loss is {}".format(i, self.stats['loss'][-1]))
             if i % freq == 0 or i == 1:
-                f1, train_loss = self.evaluate(train_loader, verbose=False)
-                self.stats['train_score'].append(f1)
-                self.stats['train_loss'].append(train_loss)
                 self.stats['epoch'].append(i)
                 self.stats['wallclock'].append(time.time() - start_training)
-                print("Epoch #{}: Train F1-score is {}".format(i, self.stats['train_score'][-1]))
-                self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i+1)))
+                if train_eval:
+                    f1, train_loss = self.evaluate(train_loader, verbose=False)
+                    self.stats['train_score'].append(f1)
+                    self.stats['train_loss'].append(train_loss)
+                    print("Epoch #{}: Train F1 is {}".format(i, self.stats['train_score'][-1]))
                 if valid_loader is not None:
                     f1, val_loss = self.evaluate(valid_loader, verbose=False)
                     self.stats['valid_score'].append(f1)
                     self.stats['valid_loss'].append(val_loss)
-                    print("Epoch #{}: Validation F1-score is {}".format(i, self.stats['valid_score'][-1]))
+                    print("Epoch #{}: Validation F1 is {}".format(i, self.stats['valid_score'][-1]))
                 self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
+                self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i)))
             print("Time taken for epoch: {}s".format(time.time() - start_epoch))
             print()
 

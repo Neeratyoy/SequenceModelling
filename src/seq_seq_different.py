@@ -38,6 +38,7 @@ class LSTMSeq2SeqDifferent(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, layers=1,
                  bidirectional=False, layernorm=False):
         super().__init__()
+        self.name = 'lstm'
 
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -291,7 +292,7 @@ class TransformerSeq2SeqDifferent(nn.Module):
 ## TASK SPECIFIC METHODS
 ## ----------------------------------------------------------------------------
 
-def create_ncopy_task(sequence_length, n_copy, batch_size, train_test_ratio,
+def create_ncopy_task(sequence_length, n_copy, batch_size, start_token, train_test_ratio,
                       train_valid_ratio=None, verbose=True):
     # Generating data
     state_size = sequence_length  # sequence length
@@ -418,8 +419,9 @@ class Seq2SeqDifferent():
         if epochs is None:
             epochs = np.arange(1, len(train) + 1)
         plt.clf()
-        plt.plot(epochs, train, label="Training")
-        if valid:  # valid is empty
+        if train:  # train is not empty
+            plt.plot(epochs, train, label="Training")
+        if valid:  # valid is not empty
             plt.plot(epochs, valid, label="Validation")
         plt.title("{} comparison".format(stats))
         plt.xlabel("epochs")
@@ -477,7 +479,7 @@ class Seq2SeqDifferent():
         return o
 
     def train(self, epochs, train_loader, valid_loader=None, freq=10,
-              out_dir='./', create_dir=True):
+              out_dir='./', create_dir=True, train_eval=True):
         """ Function to train the model and save statistics
 
         Parameters
@@ -531,22 +533,22 @@ class Seq2SeqDifferent():
                 self.optimizer.step()
 
                 # print(".", end='')  # for colab (comment below print)
-                print("Epoch #{}: Batch {}/{} -- Loss = {}; "
-                      "Time taken: {}s".format(i, j, len(train_loader),
-                                               loss.item(), time.time() - start), end='\r')
+                # print("Epoch #{}: Batch {}/{} -- Loss = {}; "
+                #       "Time taken: {}s".format(i, j, len(train_loader),
+                #                                loss.item(), time.time() - start), end='\r')
                 loss_tracker.append(loss.item())
 
             self.stats['loss'].append(np.mean(loss_tracker))
             print()
             print("Epoch #{}: Average loss is {}".format(i, self.stats['loss'][-1]))
             if i % freq == 0 or i == 1:
-                f1, train_loss = self.evaluate(train_loader, verbose=False)
-                self.stats['train_score'].append(f1)
-                self.stats['train_loss'].append(train_loss)
                 self.stats['epoch'].append(i)
                 self.stats['wallclock'].append(time.time() - start_training)
-                print("Epoch #{}: Train F1 is {}".format(i, self.stats['train_score'][-1]))
-
+                if train_eval:
+                    f1, train_loss = self.evaluate(train_loader, verbose=False)
+                    self.stats['train_score'].append(f1)
+                    self.stats['train_loss'].append(train_loss)
+                    print("Epoch #{}: Train F1 is {}".format(i, self.stats['train_score'][-1]))
                 if valid_loader is not None:
                     f1, val_loss = self.evaluate(valid_loader, verbose=False)
                     self.stats['valid_score'].append(f1)
