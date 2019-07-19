@@ -377,8 +377,8 @@ class SeqLabel():
                     print("Epoch #{}: Validation F1 is {}".format(i, self.stats['valid_score'][-1]))
 
                 if out_dir:
-	                self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i)))
-	                self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
+                    self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i)))
+                    self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
 
             print("Time taken for epoch: {}s".format(time.time() - start_epoch))
             print()
