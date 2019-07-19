@@ -201,6 +201,8 @@ class TransformerSeq2SeqSame(nn.Module):
 ## TASK SPECIFIC METHODS
 ## ----------------------------------------------------------------------------
 
+from transformer import get_pad_mask_n_dim
+
 class Seq2SeqSame():
     """ Class to carry out Sequence 2 Sequence (many-to-many same)
 
@@ -216,13 +218,14 @@ class Seq2SeqSame():
 
     """
 
-    def __init__(self, model, optimizer, loss_fn, device=None):
+    def __init__(self, model, optimizer, loss_fn, device=None, metric='WER'):
         self.model = model
         self.optimizer = optimizer
         self.loss_criterion = loss_fn
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.device = device
+        self.metric = metric
         
         # get forward call for model
         if self.model.name == 'transformer':
@@ -363,12 +366,12 @@ class Seq2SeqSame():
                     f1, train_loss = self.evaluate(train_loader, vocab=vocab, wer_dict=wer_dict, verbose=False)
                     self.stats['train_score'].append(f1)
                     self.stats['train_loss'].append(train_loss)
-                    print("Epoch #{}: Train WER is {}".format(i, self.stats['train_score'][-1]))
+                    print("Epoch #{}: Train {} is {}".format(i, self.metric, self.stats['train_score'][-1]))
                 if valid_loader is not None:
                     f1, val_loss = self.evaluate(valid_loader, vocab=vocab, wer_dict=wer_dict, verbose=False)
                     self.stats['valid_score'].append(f1)
                     self.stats['valid_loss'].append(val_loss)
-                    print("Epoch #{}: Validation WER is {}".format(i, self.stats['valid_score'][-1]))
+                    print("Epoch #{}: Validation {} is {}".format(i, self.metric, self.stats['valid_score'][-1]))
 
                 if out_dir is not None:
                     self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i)))
@@ -424,14 +427,17 @@ class Seq2SeqSame():
 
                 losses.append(loss.item())
 
-        vocab = np.array(vocab)
-        scores = []
-        scores = [wer_dict[str(vocab[labels[i]])][str(vocab[preds[i]])] for i in range(len(preds))]
-        wer_score = np.mean(scores)
+        if self.metric == 'WER':
+            vocab = np.array(vocab)
+            scores = []
+            scores = [wer_dict[str(vocab[labels[i]])][str(vocab[preds[i]])] for i in range(len(preds))]
+            score = np.mean(scores)
+        else:
+            score = accuracy_score(labels, preds)
 
         if verbose:
             print('Confusion Matrix: \n', confusion_matrix(labels, preds))
             print()
             print('Classification Report: \n', classification_report(labels, preds))
 
-        return wer_score, np.mean(losses)
+        return score, np.mean(losses)
