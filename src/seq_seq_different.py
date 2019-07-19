@@ -479,7 +479,7 @@ class Seq2SeqDifferent():
         return o
 
     def train(self, epochs, train_loader, valid_loader=None, freq=10,
-              out_dir='./', create_dir=True, train_eval=True):
+              out_dir=None, create_dir=True, train_eval=True):
         """ Function to train the model and save statistics
 
         Parameters
@@ -505,9 +505,10 @@ class Seq2SeqDifferent():
                       'train_loss': [], 'valid_loss': [], 'wallclock': []}
         self.freq = freq
         start_training = time.time()
+        freq_train_time = 0.0
 
         # create output directory if it does not exist
-        if create_dir:
+        if create_dir and out_dir:
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
 
@@ -538,12 +539,16 @@ class Seq2SeqDifferent():
                 #                                loss.item(), time.time() - start), end='\r')
                 loss_tracker.append(loss.item())
 
+            # Save stats and models if out_dir is given
             self.stats['loss'].append(np.mean(loss_tracker))
+            freq_train_time += time.time() - start_epoch  # to include only train time and not eval
             print()
             print("Epoch #{}: Average loss is {}".format(i, self.stats['loss'][-1]))
             if i % freq == 0 or i == 1:
                 self.stats['epoch'].append(i)
-                self.stats['wallclock'].append(time.time() - start_training)
+                self.stats['wallclock'].append(freq_train_time)
+                freq_train_time = 0.0
+                # self.stats['wallclock'].append(time.time() - start_training)
                 if train_eval:
                     f1, train_loss = self.evaluate(train_loader, verbose=False)
                     self.stats['train_score'].append(f1)
@@ -555,8 +560,9 @@ class Seq2SeqDifferent():
                     self.stats['valid_loss'].append(val_loss)
                     print("Epoch #{}: Validation F1 is {}".format(i, self.stats['valid_score'][-1]))
 
-                self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i)))
-                self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
+                if out_dir:
+                    self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i)))
+                    self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
 
             print("Time taken for epoch: {}s".format(time.time() - start_epoch))
             print()
