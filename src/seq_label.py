@@ -290,7 +290,7 @@ class SeqLabel():
                                      self.model.hidden_dim).to(self.device)
         # forward pass
         output = self.model(x, hidden_state, cell_state)
-        return output
+        return output[-1]
       
     def transformer_forward(self, x):
         ''' calls forward pass for Transformer'''
