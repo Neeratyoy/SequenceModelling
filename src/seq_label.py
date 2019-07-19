@@ -376,7 +376,7 @@ class SeqLabel():
                     self.stats['valid_loss'].append(val_loss)
                     print("Epoch #{}: Validation F1 is {}".format(i, self.stats['valid_score'][-1]))
 
-                if out_dir:
+                if out_dir is not None:
                     self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i)))
                     self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
 

@@ -370,14 +370,15 @@ class Seq2SeqSame():
                     self.stats['valid_loss'].append(val_loss)
                     print("Epoch #{}: Validation WER is {}".format(i, self.stats['valid_score'][-1]))
 
-                if out_dir:
+                if out_dir is not None:
                     self.model.save(os.path.join(out_dir, "model_epoch_{}.pkl".format(i)))
                     self.save_stats(self.stats, os.path.join(out_dir, "stats.json"))
 
             print("Time taken for epoch: {}s".format(time.time() - start_epoch))
             print()
 
-        self.plot_stats(freq=freq, out_dir=out_dir)
+        if out_dir is not None:
+            self.plot_stats(freq=freq, out_dir=out_dir)
         print("Training completed in {}s".format(time.time() - start_training))
         return self.model, self.stats
 
