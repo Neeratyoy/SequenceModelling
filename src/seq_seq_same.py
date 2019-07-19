@@ -360,12 +360,12 @@ class Seq2SeqSame():
                 freq_train_time = 0.0
                 # self.stats['wallclock'].append(time.time() - start_training)
                 if train_eval:
-                    f1, train_loss = self.evaluate(train_loader, verbose=False)
+                    f1, train_loss = self.evaluate(train_loader, vocab=vocab, wer_dict=wer_dict, verbose=False)
                     self.stats['train_score'].append(f1)
                     self.stats['train_loss'].append(train_loss)
                     print("Epoch #{}: Train F1 is {}".format(i, self.stats['train_score'][-1]))
                 if valid_loader is not None:
-                    f1, val_loss = self.evaluate(valid_loader, verbose=False)
+                    f1, val_loss = self.evaluate(valid_loader, vocab=vocab, wer_dict=wer_dict, verbose=False)
                     self.stats['valid_score'].append(f1)
                     self.stats['valid_loss'].append(val_loss)
                     print("Epoch #{}: Validation F1 is {}".format(i, self.stats['valid_score'][-1]))
