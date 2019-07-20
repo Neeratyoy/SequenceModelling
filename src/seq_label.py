@@ -59,14 +59,7 @@ class LSTMSeqLabel(nn.Module):
     def forward(self, x, hidden_state, cell_state):
         embed = self.embedding(x)
         output, (_, _) = self.lstm(embed, hidden_state, cell_state)
-        if self.bidirectional:
-            ### Flattening output for the 2 directions in bidirectional
-            # Taking the last output for Left-to-Right (t=T)
-            # Taking the last output for Right-to-left (t=1)
-            output = torch.cat((output[-1,:,0,:], output[0,:,1,:]), dim=1)
-            output = output.unsqueeze(0)
-        else:
-            output = output[-1].unsqueeze(0)
+        output = output[-1].unsqueeze(0)
         output = self.fc(output)
         return output
 
@@ -156,14 +149,14 @@ class TransformerSeqLabel(nn.Module):
     """
     def __init__(self, in_dim, out_dim, N, heads, embed_dim, model_dim, key_dim, value_dim, ff_dim,
                  dropout=0.1, max_len=10000, batch_first=True, pretrained_vec=None):
-        
+
         super().__init__()
         self.name = 'transformer'
-        
+
         self.batch_first = batch_first
         self.model_dim = model_dim
         self.embed_dim = embed_dim
-        
+
         # define layers
         self.embedding = nn.Embedding(in_dim, embed_dim)
         # not training embedding layer if pretrained embedding is provided
@@ -176,7 +169,7 @@ class TransformerSeqLabel(nn.Module):
         self.encoder = Encoder(N, heads, model_dim, key_dim, value_dim, ff_dim, dropout=dropout)
         # final output layer
         self.fc = nn.Linear(model_dim, out_dim)
-    
+
         # xavier initialization
         for p in self.parameters():
             if p.dim() > 1 and p.requires_grad:
@@ -186,19 +179,19 @@ class TransformerSeqLabel(nn.Module):
         # transpose to use [batch, seq_len, dim]
         if not self.batch_first:
             x = x.transpose(0, 1)
-            
+
         x = self.embedding(x)
         if self.embed_dim != self.model_dim:
             x = self.fc_in(x)
         x = self.pos_enc(x)
         x = self.encoder(x, mask)
         x = self.fc(x)
-        
+
         # transpose back to original [seq_len, batch, dim]
         if not self.batch_first:
             x = x.transpose(0, 1)
         return x
-        
+
     def save(self, file_path='./model.pkl'):
         torch.save(self.state_dict(), file_path)
 
@@ -235,7 +228,7 @@ class SeqLabel():
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.device = device
-        
+
         # get forward call for model
         if self.model.name == 'transformer':
             self.forward = self.transformer_forward
@@ -275,7 +268,7 @@ class SeqLabel():
         with open(file_path, 'r') as f:
             self.stats = json.load(f)
         return self.stats
-      
+
     def lstm_forward(self, x):
         ''' calls forward pass for LSTM '''
         if self.model.bidirectional:
@@ -291,7 +284,7 @@ class SeqLabel():
         # forward pass
         output = self.model(x, hidden_state, cell_state)
         return output[-1]
-      
+
     def transformer_forward(self, x):
         ''' calls forward pass for Transformer'''
         # generating padding mask
@@ -332,7 +325,7 @@ class SeqLabel():
         if create_dir and out_dir:
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
-        
+
         for i in range(1, epochs+1):
             loss_tracker = []
             start_epoch = time.time()
@@ -340,7 +333,7 @@ class SeqLabel():
             for j, batch in enumerate(train_loader, start=1):
                 # generate initial hidden & cell states
                 start = time.time()
-                
+
                 # forward pass
                 output = self.forward(batch.text)
                 # backward pass for the batch (+ weight updates)
